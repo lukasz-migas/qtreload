@@ -1,0 +1,21 @@
+{
+  "template": "https://github.com/tlambert03/pyrepo-cookiecutter",
+  "commit": "69dc075bc0665357baaa4e6f76b44e41e4ee5b90",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "full_name": "Lukasz G. Migas",
+      "email": "lukas.migas@yahoo.com",
+      "github_username": "lukasz-migas",
+      "project_name": "qtreload",
+      "project_slug": "qtreload",
+      "project_short_description": "Qt utilities to enable hot-reloading of python/Qt code",
+      "pypi_username": "lukasz-migas",
+      "_copy_without_render": [
+        ".github/workflows/*"
+      ],
+      "_template": "https://github.com/tlambert03/pyrepo-cookiecutter"
+    }
+  },
+  "directory": null
+}
