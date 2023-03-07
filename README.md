@@ -11,9 +11,9 @@ Have you been using Jupyter Notebook's magic functions such as
 
 where you might have been editing code in VSCode or Pycharm and executing actions in Jupyter Notebook?
 
-Or have you previously used [LiClipse](https://www.liclipse.com/) which as [Debugger Auto-Reload](https://www.pydev.org/manual_adv_debugger_auto_reload.html)?
+Or have you previously used [LiClipse](https://www.liclipse.com/) which has [Debugger Auto-Reload](https://www.pydev.org/manual_adv_debugger_auto_reload.html)?
 
-Well, this tiny library provides similar capabilities by 'hot-reloading' python modules when there are changes to
+Well, `qtreload` provides similar capabilities by 'hot-reloading' python modules when there are changes to
 the source code. It operates by generating a list of all possible modules/submodules for a specific project and
 then using `QFileWatcher` to observe any changes to these files.
 
