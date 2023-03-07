@@ -1,7 +1,5 @@
 """Hot-reload widget."""
 import importlib
-import os
-import pkgutil
 import typing as ty
 from logging import getLogger
 from pathlib import Path
@@ -11,48 +9,9 @@ from qtpy.QtWidgets import QHBoxLayout, QLabel, QWidget
 from superqt.utils import qthrottled
 
 from qtreload.pydevd_reload import xreload
+from qtreload.utilities import get_import_path, path_to_module
 
 logger = getLogger(__name__)
-
-# store reference to QtReloadWidget to prevent garbage collection
-_reload_ref = None
-
-
-def install_hot_reload(parent):
-    """Install hot-reload module - recommended for developers only."""
-    global _reload_ref
-
-    run_reload = os.environ.get("QTRELOAD_HOT_RELOAD", "0") == "1"
-    if run_reload and _reload_ref is None:
-        modules = os.environ.get("QTRELOAD_HOT_RELOAD_MODULES", "")
-        # split modules separated by comma
-        modules = modules.split(",") if modules else []
-        # remove empty strings
-        modules = [module.strip() for module in modules]
-        # initialize widget
-        _reload_ref = QtReloadWidget(list(set(modules)), parent=parent)
-    return _reload_ref
-
-
-def get_import_path(module: str) -> ty.Optional[Path]:
-    """Get module path."""
-    module = pkgutil.get_loader(module)
-    if module is None:
-        return None
-    path = Path(module.get_filename())
-    return path.parent
-
-
-def path_to_module(path: str, module_path: Path) -> str:
-    """Turn path into module name."""
-    module = path.split(str(module_path.parent))[1]
-    if "src" in module:
-        module = module.split("src")[1]
-    module = module.replace("\\", ".")[:-3]
-    if module.startswith("."):
-        module = module[1:]
-    return module
-
 
 class QtReloadWidget(QWidget):
     """Reload Widget."""
@@ -117,11 +76,11 @@ class QtReloadWidget(QWidget):
             self._watcher.addPaths(paths)
             self._info.setText(f"Added {len(paths)} paths to watcher")
 
-    def get_module_path_for_path(self, path: str) -> str:
+    def get_module_path_for_path(self, path: str) -> Path:
         """Map path to module."""
         index = self.path_to_index_map.get(path, None)
         if index is None:
-            return ""
+            raise ValueError("Path not found in module paths")
         return self._module_paths[index]
 
     @qthrottled(timeout=500, leading=False)
@@ -136,14 +95,14 @@ class QtReloadWidget(QWidget):
             self._reload_qss(path)
 
     def _reload_py(self, path: str):
-        module = path_to_module(path, self.get_module_path_for_path(path))
-        logger.debug(f"'{path}' changed...")
         try:
+            module = path_to_module(path, self.get_module_path_for_path(path))
+            logger.debug(f"'{path}' changed...")
             res = xreload(importlib.import_module(module))
             self._info.setText(f"'{module}' (changed={res})")
             logger.debug(f"Module '{module}' (changed={res})")
         except Exception as e:
-            logger.debug(f"Failed to reload '{path}' {module}' Error={e}...")
+            logger.debug(f"Failed to reload '{path}' Error={e}...")
 
     def _reload_qss(self, path: str):
         self.evt_theme.emit()
