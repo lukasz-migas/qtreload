@@ -2,8 +2,9 @@ import os
 
 try:
     import qtpy
-except ImportError:
+except Exception:
     qtpy = None
+
 import pytest
 from qtreload.install import install_hot_reload
 from qtreload.qt_reload import QtReloadWidget
