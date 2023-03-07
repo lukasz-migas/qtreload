@@ -1,6 +1,6 @@
 """
 This code was taken and slightly modified from the PyDev.Debugger project which is under the Eclipse Public License 1.0
-https://github.com/fabioz/PyDev.Debugger/blob/main/_pydevd_bundle/pydevd_reload.py
+https://github.com/fabioz/PyDev.Debugger/blob/main/_pydevd_bundle/pydevd_reload.py.
 
 Based on the python xreload.
 
@@ -136,7 +136,7 @@ def write_err(*args):
             new_lst.append(str(a))
 
         msg = " ".join(new_lst)
-        s = "code reload: %s\n" % (msg,)
+        s = f"code reload: {msg}\n"
         cmd = py_db.cmd_factory.make_io_message(s, 2)
         if py_db.writer is not None:
             py_db.writer.add_command(cmd)
@@ -165,11 +165,7 @@ def notify_error(*args):
 # =======================================================================================================================
 def code_objects_equal(code0, code1):
     for d in dir(code0):
-        if (
-            d.startswith("_")
-            or "line" in d
-            or d in ("replace", "co_positions", "co_qualname")
-        ):
+        if d.startswith("_") or "line" in d or d in ("replace", "co_positions", "co_qualname"):
             continue
         if getattr(code0, d) != getattr(code1, d):
             return False
@@ -283,9 +279,7 @@ class Reload:
     def _handle_namespace(self, namespace, is_class_namespace=False):
         on_finish = None
         if is_class_namespace:
-            xreload_after_update = getattr(
-                namespace, "__xreload_after_reload_update__", None
-            )
+            xreload_after_update = getattr(namespace, "__xreload_after_reload_update__", None)
             if xreload_after_update is not None:
                 self.found_change = True
 
@@ -303,14 +297,13 @@ class Reload:
             # If a client wants to know about it, give him a chance.
             self._on_finish_callbacks.append(on_finish)
 
-    def _update(
-        self, namespace, name, oldobj, newobj, is_class_namespace=False
-    ):
+    def _update(self, namespace, name, oldobj, newobj, is_class_namespace=False):
         """Update oldobj, if possible in place, with newobj.
 
         If oldobj is immutable, this simply returns newobj.
 
         Args:
+        ----
           oldobj: the object to be updated
           newobj: the object used as the source for the update
         """
@@ -324,8 +317,7 @@ class Reload:
                 # Cop-out: if the type changed, give up
                 if name not in ("__builtins__",):
                     notify_error(
-                        "Type of: %s (old: %s != new: %s) changed... Skipping."
-                        % (name, type(oldobj), type(newobj))
+                        f"Type of: {name} (old: {type(oldobj)} != new: {type(newobj)}) changed... Skipping."
                     )
                 return
 
@@ -371,9 +363,7 @@ class Reload:
                 # as even doing a comparison may break things -- see: https://github.com/microsoft/debugpy/issues/615).
                 xreload_old_new = None
                 if is_class_namespace:
-                    xreload_old_new = getattr(
-                        namespace, "__xreload_old_new__", None
-                    )
+                    xreload_old_new = getattr(namespace, "__xreload_old_new__", None)
                     if xreload_old_new is not None:
                         self.found_change = True
                         xreload_old_new(name, oldobj, newobj)
@@ -383,21 +373,11 @@ class Reload:
                     xreload_old_new(namespace, name, oldobj, newobj)
                     self.found_change = True
 
-                # Too much information to the user...
-                # else:
-                #     notify_info0('%s NOT updated. Create __xreload_old_new__(name, old, new) for custom reload' % (name,))
-
         except Exception as e:
-            notify_error(
-                "Exception found when updating %s. Proceeding for other items."
-                % (name,)
-            )
-            print(
-                f"Exception found when updating {name}. Proceeding for other items.. Error: {e}"
-            )
+            notify_error(f"Exception found when updating {name}. Proceeding for other items.")
+            print(f"Exception found when updating {name}. Proceeding for other items.. Error: {e}")
 
     # All of the following functions have the same signature as _update()
-
     def _update_function(self, oldfunc, newfunc):
         """Update a function object."""
         oldfunc.__doc__ = newfunc.__doc__
@@ -451,7 +431,7 @@ class Reload:
         #    notify_info('Removed:', name, 'from', oldclass)
         #    delattr(oldclass, name)
 
-        for name in (oldnames & newnames) - set(["__dict__", "__doc__"]):
+        for name in (oldnames & newnames) - {"__dict__", "__doc__"}:
             self._update(
                 oldclass,
                 name,
@@ -463,10 +443,7 @@ class Reload:
         old_bases = getattr(oldclass, "__bases__", None)
         new_bases = getattr(newclass, "__bases__", None)
         if str(old_bases) != str(new_bases):
-            notify_error(
-                "Changing the hierarchy of a class is not supported. %s may be inconsistent."
-                % (oldclass,)
-            )
+            notify_error(f"Changing the hierarchy of a class is not supported. {oldclass} may be inconsistent.")
 
         self._handle_namespace(oldclass, is_class_namespace=True)
 

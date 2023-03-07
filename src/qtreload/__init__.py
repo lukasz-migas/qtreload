@@ -1,4 +1,4 @@
-"""Qt utilities to enable hot-reloading of python/Qt code"""
+"""Qt utilities to enable hot-reloading of python/Qt code."""
 from importlib.metadata import PackageNotFoundError, version
 
 try:
