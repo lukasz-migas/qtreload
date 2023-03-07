@@ -2,18 +2,20 @@ import os
 
 try:
     import qtpy
+    
 except Exception:
     qtpy = None
 
 import pytest
-from qtreload.install import install_hot_reload
-from qtreload.qt_reload import QtReloadWidget
+
 from qtreload.utilities import path_to_module
 
 
 @pytest.mark.skipif(qtpy is None, reason="Qt is required for this test")
 def test_widget(qtbot):
     """Test widget."""
+    from qtreload.qt_reload import QtReloadWidget
+    
     widget = QtReloadWidget(["qtreload"])
     qtbot.addWidget(widget)
     assert widget is not None
@@ -27,6 +29,8 @@ def test_widget(qtbot):
 
 @pytest.mark.skipif(qtpy is None, reason="Qt is required for this test")
 def test_install_hot_reload(qtbot):
+    from qtreload.install import install_hot_reload
+
     """Test installing hot reload."""
     os.environ["QTRELOAD_HOT_RELOAD"] = "0"
     widget = install_hot_reload(None)
