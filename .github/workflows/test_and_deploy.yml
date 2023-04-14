@@ -1,0 +1,195 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*" # Push events to matching v*, i.e. v1.0, v20.15.10
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * 0" # every week (for --pre release tests)
+
+jobs:
+  test:
+    name: ${{ matrix.platform }} py${{ matrix.python-version }} ${{ matrix.backend }}
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.8", "3.9", "3.10"]
+        backend: [pyqt5, pyside2]
+        include:
+          # pyqt6 and pyside6 on latest platforms
+          - python-version: "3.10"
+            platform: ubuntu-latest
+            backend: pyqt6
+          - python-version: "3.10"
+            platform: windows-latest
+            backend: pyqt6
+          - python-version: "3.10"
+            platform: macos-latest
+            backend: pyqt6
+          - python-version: "3.11"
+            platform: ubuntu-latest
+            backend: pyqt6
+          - python-version: "3.11"
+            platform: windows-latest
+            backend: pyqt5
+          - python-version: "3.11"
+            platform: macos-latest
+            backend: pyside6
+
+          # python 3.7
+          - python-version: 3.7
+            platform: macos-latest
+            backend: pyqt5
+          - python-version: 3.7
+            platform: windows-latest
+            backend: pyside2
+          # legacy Qt
+          - python-version: 3.7
+            platform: ubuntu-latest
+            backend: pyqt512
+          - python-version: 3.7
+            platform: ubuntu-latest
+            backend: pyqt513
+          - python-version: 3.7
+            platform: ubuntu-latest
+            backend: pyqt514
+
+    steps:
+      - name: Cancel Previous Runs
+        uses: styfle/cancel-workflow-action@0.11.0
+        with:
+          access_token: ${{ github.token }}
+
+      - uses: actions/checkout@v3
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: tlambert03/setup-qt-libs@v1.4
+
+      - name: Linux opengl
+        if: runner.os == 'Linux' && ( matrix.backend == 'pyside6' || matrix.backend == 'pyqt6' )
+        run: sudo apt-get install -y libopengl0 libegl1-mesa libxcb-xinput0
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install setuptools tox tox-gh-actions
+
+      - name: Test with tox
+        uses: GabrielBB/xvfb-action@v1
+        timeout-minutes: 3
+        with:
+          run: python -m tox
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          BACKEND: ${{ matrix.backend }}
+
+      - name: Coverage
+        uses: codecov/codecov-action@v3
+
+  test_old_qtpy:
+    name: qtpy minreq
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: tlambert03/setup-qt-libs@v1.4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.8"
+
+      - name: install
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e .[test,pyqt5]
+          python -m pip install qtpy==1.1.0 typing-extensions==3.10.0.0
+
+      - name: Test
+        uses: GabrielBB/xvfb-action@v1
+        with:
+          run: python -m pytest --color=yes
+
+  check-manifest:
+    name: Check Manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+      - run: pip install check-manifest && check-manifest
+
+
+  deploy_test:
+    name: Deploy to PyPI (test)
+    needs: test
+    if: success() && startsWith(github.ref, 'refs/tags/') && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: install
+        run: |
+          git tag
+          pip install -U pip build twine
+          python -m build
+          twine check dist/*
+          ls -lh dist
+
+      - name: Build and publish
+        run: twine upload --repository testpypi dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_ALL_TOKEN }}
+
+      - uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+
+  deploy:
+    name: Deploy
+    needs: deploy_test
+    if: success() && startsWith(github.ref, 'refs/tags/') && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: install
+        run: |
+          git tag
+          pip install -U pip build twine
+          python -m build
+          twine check dist/*
+          ls -lh dist
+
+      - name: Build and publish
+        run: twine upload dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_ALL_TOKEN }}
+
+      - uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
