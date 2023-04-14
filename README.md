@@ -1,6 +1,12 @@
 # qtreload
  Qt utilities to enable hot-reloading of python/Qt code
 
+[![License](https://img.shields.io/pypi/l/qtreload.svg?color=green)](https://github.com/lukasz-migas/qtreload/raw/main/LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/qtreload.svg?color=green)](https://pypi.org/project/qtreload)
+[![Python
+Version](https://img.shields.io/pypi/pyversions/qtreload.svg?color=green)](https://python.org)
+[![Test](https://github.com/lukasz-migas/qtreload/actions/workflows/test_and_deploy.yml/badge.svg)](https://github.com/lukasz-migas/qtreload/actions/workflows/test_and_deploy.yml)
+[![codecov](https://codecov.io/gh/lukasz-migas/qtreload/branch/main/graph/badge.svg?token=dcsjgl1sOi)](https://codecov.io/gh/lukasz-migas/qtreload)
 
 Have you been using Jupyter Notebook's magic functions such as 
 
