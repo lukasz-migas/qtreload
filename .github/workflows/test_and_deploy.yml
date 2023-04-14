@@ -139,7 +139,7 @@ jobs:
         run: twine upload --repository testpypi dist/*
         env:
           TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_ALL_TOKEN }}
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_TOKEN }}
 
   deploy:
     name: Deploy
@@ -167,7 +167,7 @@ jobs:
         run: twine upload dist/*
         env:
           TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_ALL_TOKEN }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
 
       - uses: softprops/action-gh-release@v1
         with:
