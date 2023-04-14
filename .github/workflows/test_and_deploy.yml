@@ -114,7 +114,7 @@ jobs:
 
   deploy_test:
     name: Deploy to PyPI (test)
-    needs: test
+    needs: [test, check-manifest]
     if: success() && startsWith(github.ref, 'refs/tags/') && github.event_name != 'schedule'
     runs-on: ubuntu-latest
 
@@ -129,6 +129,7 @@ jobs:
       - name: install
         run: |
           git tag
+          python -m pip install --upgrade pip
           pip install -U pip build twine
           python -m build
           twine check dist/*
@@ -139,10 +140,6 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.TEST_PYPI_ALL_TOKEN }}
-
-      - uses: softprops/action-gh-release@v1
-        with:
-          generate_release_notes: true
 
   deploy:
     name: Deploy
