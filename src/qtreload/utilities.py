@@ -1,8 +1,8 @@
 """Utilities."""
 import pkgutil
+import sys
 import typing as ty
 from pathlib import Path
-import sys
 
 IS_WIN = sys.platform == "win32"
 

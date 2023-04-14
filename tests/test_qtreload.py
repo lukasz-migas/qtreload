@@ -2,7 +2,7 @@ import os
 
 try:
     import qtpy
-    
+
 except Exception:
     qtpy = None
 
@@ -15,7 +15,7 @@ from qtreload.utilities import path_to_module
 def test_widget(qtbot):
     """Test widget."""
     from qtreload.qt_reload import QtReloadWidget
-    
+
     widget = QtReloadWidget(["qtreload"])
     qtbot.addWidget(widget)
     assert widget is not None

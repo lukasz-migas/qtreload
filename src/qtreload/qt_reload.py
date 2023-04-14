@@ -13,6 +13,7 @@ from qtreload.utilities import get_import_path, path_to_module
 
 logger = getLogger(__name__)
 
+
 class QtReloadWidget(QWidget):
     """Reload Widget."""
 

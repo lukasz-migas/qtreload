@@ -316,9 +316,7 @@ class Reload:
             if type(oldobj) is not type(newobj):
                 # Cop-out: if the type changed, give up
                 if name not in ("__builtins__",):
-                    notify_error(
-                        f"Type of: {name} (old: {type(oldobj)} != new: {type(newobj)}) changed... Skipping."
-                    )
+                    notify_error(f"Type of: {name} (old: {type(oldobj)} != new: {type(newobj)}) changed... Skipping.")
                 return
 
             if isinstance(newobj, types.FunctionType):

@@ -21,8 +21,13 @@ else:
     to_test = [
         ("/home/user/Documents/test/functions.py", Path("/home/user/Documents/test"), "test.functions"),
         ("/home/user/Documents/src/test/functions.py", Path("/home/user/Documents/src/test"), "test.functions"),
-        ("/home/user/Documents/site-packages/test/functions.py", Path("/home/user/Documents/site-packages/test"), "test.functions"),
+        (
+            "/home/user/Documents/site-packages/test/functions.py",
+            Path("/home/user/Documents/site-packages/test"),
+            "test.functions",
+        ),
     ]
+
 
 @pytest.mark.parametrize("path, module, expected", to_test)
 def test_path_to_module(path, module, expected):
