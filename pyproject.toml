@@ -1,7 +1,14 @@
-# https://peps.python.org/pep-0517/
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
-build-backend = "hatchling.build"
+requires = [
+  "setuptools >= 42",
+  "wheel",
+  "build",
+  "setuptools_scm[toml]>=3.4"
+]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+write_to = "src/qtreload/_version.py"
 
 # https://peps.python.org/pep-0621/
 [project]
@@ -33,18 +40,16 @@ dependencies = [
 # extras
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
 [project.optional-dependencies]
-test = ["pytest>=6.0", "pytest-cov"]
+test = ["pytest>=6.0", "pytest-cov", "pytest-qt"]
 dev = [
     "black",
     "ipython",
     "mypy",
     "pdbpp",
     "pre-commit",
-    "pytest-cov",
-    "pytest",
-    "pytest-qt",
     "rich",
     "ruff",
+    "qtreload[test]",
 ]
 
 [project.urls]
@@ -60,17 +65,12 @@ repository = "https://github.com/lukasz-migas/qtreload"
 # [project.entry-points."spam.magical"]
 # tomatoes = "spam:main_tomatoes"
 
-# https://hatch.pypa.io/latest/config/metadata/
-[tool.hatch.version]
-source = "vcs"
-
-# https://hatch.pypa.io/latest/config/build/#file-selection
-# [tool.hatch.build.targets.sdist]
-# include = ["/src", "/tests"]
-
-# [tool.hatch.build.targets.wheel]
-# only-include = ["src"]
-# sources = ["src"]
+# https://github.com/psf/black
+[tool.black]
+line-length = 120
+target-version = ['py37', 'py38', 'py39']
+include = '\.pyi?$'
+exclude = '.asv'
 
 # https://github.com/charliermarsh/ruff
 [tool.ruff]
@@ -110,12 +110,6 @@ extend-ignore = [
 "tests/*.py" = ["D", "S"]
 "setup.py" = ["D"]
 "pydevd_reload.py" = ["D", "S"]
-
-[tool.black]
-line-length = 120
-target-version = ['py37', 'py38', 'py39', 'py310']
-include = '\.pyi?$'
-exclude = '.asv'
 
 [tool.isort]
 profile = "black"
@@ -164,6 +158,7 @@ ignore = [
     ".ruff_cache/**/*",
     "setup.py",
     "tests/**/*",
+    "**/*_version.py"
 ]
 
 # https://python-semantic-release.readthedocs.io/en/latest/configuration.html

@@ -106,3 +106,4 @@ ENV/
 
 # Cython debug symbols
 cython_debug/
+_version.py
