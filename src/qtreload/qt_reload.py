@@ -3,6 +3,7 @@ import importlib
 import typing as ty
 from logging import getLogger
 from pathlib import Path
+from datetime import datetime
 
 from qtpy.QtCore import QFileSystemWatcher, Signal
 from qtpy.QtWidgets import QHBoxLayout, QTextEdit, QWidget
@@ -13,6 +14,8 @@ from qtreload.utilities import get_import_path, path_to_module
 
 logger = getLogger(__name__)
 
+
+TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 class QtReloadWidget(QWidget):
     """Reload Widget."""
@@ -107,12 +110,14 @@ class QtReloadWidget(QWidget):
             module = path_to_module(path, self.get_module_path_for_path(path))
             logger.debug(f"'{path}' changed...")
             res = xreload(importlib.import_module(module))
-            self._info.append(f"'{module}' (changed={res})")
+            now = datetime.now().strftime(TIME_FMT)
+            self._info.append(f"{now} - '{module}' (changed={res})")
             logger.debug(f"Module '{module}' (changed={res})")
         except Exception as e:
             logger.debug(f"Failed to reload '{path}' Error={e}...")
 
     def _reload_qss(self, path: str):
         self.evt_theme.emit()
-        self._info.append(f"Stylesheet '{Path(path).name}' changed")
+        now = datetime.now().strftime(TIME_FMT)
+        self._info.append(f"{now} - '{Path(path).name}' changed")
         logger.debug(f"Stylesheet '{path}' changed...")
