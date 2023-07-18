@@ -17,6 +17,7 @@ logger = getLogger(__name__)
 
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
+
 class QtReloadWidget(QWidget):
     """Reload Widget."""
 
@@ -25,7 +26,7 @@ class QtReloadWidget(QWidget):
     def __init__(self, modules: ty.Iterable[str], parent=None, auto_connect: bool = True):
         super().__init__(parent=parent)
         # setup stylesheet
-        self.setStyleSheet("""QtReloadWidget QLabel { border: 3px solid #ff0000; border-radius: 2px;}""")
+        self.setStyleSheet("""QtReloadWidget QTextEdit { border: 3px solid #ff0000; border-radius: 2px;}""")
 
         # setup file watcher
         self._watcher = QFileSystemWatcher()
