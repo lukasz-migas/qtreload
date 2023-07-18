@@ -5,7 +5,7 @@ from logging import getLogger
 from pathlib import Path
 
 from qtpy.QtCore import QFileSystemWatcher, Signal
-from qtpy.QtWidgets import QHBoxLayout, QLabel, QWidget
+from qtpy.QtWidgets import QHBoxLayout, QTextEdit, QWidget
 from superqt.utils import qthrottled
 
 from qtreload.pydevd_reload import xreload
@@ -21,9 +21,15 @@ class QtReloadWidget(QWidget):
 
     def __init__(self, modules: ty.Iterable[str], parent=None, auto_connect: bool = True):
         super().__init__(parent=parent)
+        # setup stylesheet
+        self.setStyleSheet("""QtReloadWidget QLabel { border: 3px solid #ff0000; border-radius: 2px;}""")
+
+        # setup file watcher
         self._watcher = QFileSystemWatcher()
 
-        self._info = QLabel()
+        self._info = QTextEdit(self)
+        self._info.setReadOnly(True)
+        self._info.setMaximumHeight(50)
         layout = QHBoxLayout()
         layout.addWidget(self._info, stretch=True)
         self.setLayout(layout)
@@ -34,6 +40,7 @@ class QtReloadWidget(QWidget):
         logger.debug(f"Watching {self._module_paths} for changes")
         if self._module_paths and auto_connect:
             self.setup_paths()
+
 
     def setup_paths(self):
         """Setup paths."""
@@ -75,7 +82,7 @@ class QtReloadWidget(QWidget):
         logger.debug(f"Added {len(paths)} paths to watcher")
         if paths:
             self._watcher.addPaths(paths)
-            self._info.setText(f"Added {len(paths)} paths to watcher")
+            self._info.append(f"Added {len(paths)} paths to watcher")
 
     def get_module_path_for_path(self, path: str) -> Path:
         """Map path to module."""
@@ -100,11 +107,12 @@ class QtReloadWidget(QWidget):
             module = path_to_module(path, self.get_module_path_for_path(path))
             logger.debug(f"'{path}' changed...")
             res = xreload(importlib.import_module(module))
-            self._info.setText(f"'{module}' (changed={res})")
+            self._info.append(f"'{module}' (changed={res})")
             logger.debug(f"Module '{module}' (changed={res})")
         except Exception as e:
             logger.debug(f"Failed to reload '{path}' Error={e}...")
 
     def _reload_qss(self, path: str):
         self.evt_theme.emit()
+        self._info.append(f"Stylesheet '{Path(path).name}' changed")
         logger.debug(f"Stylesheet '{path}' changed...")
