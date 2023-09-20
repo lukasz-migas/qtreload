@@ -172,8 +172,10 @@ ignore = [
     "**/*_version.py",
     "*.json",
     ".idea/*",
+    ".idea/*/*",
     "misc/*",
     "tox.ini",
+    "codecov.yml",
 ]
 
 # https://python-semantic-release.readthedocs.io/en/latest/configuration.html
