@@ -1,9 +1,9 @@
 """Hot-reload widget."""
 import importlib
 import typing as ty
+from datetime import datetime
 from logging import getLogger
 from pathlib import Path
-from datetime import datetime
 
 from qtpy.QtCore import QFileSystemWatcher, Signal
 from qtpy.QtWidgets import QHBoxLayout, QTextEdit, QWidget
