@@ -1,4 +1,5 @@
 """Hot-reload widget."""
+from __future__ import annotations
 import importlib
 import typing as ty
 from datetime import datetime
@@ -23,7 +24,7 @@ class QtReloadWidget(QWidget):
 
     evt_theme = Signal()
 
-    def __init__(self, modules: ty.Iterable[str], parent=None, auto_connect: bool = True):
+    def __init__(self, modules: ty.Iterable[str], parent=None, auto_connect: bool = True) -> None:
         super().__init__(parent=parent)
         # setup stylesheet
         self.setStyleSheet("""QtReloadWidget QTextEdit { border: 3px solid #ff0000; border-radius: 2px;}""")
@@ -33,7 +34,7 @@ class QtReloadWidget(QWidget):
 
         self._info = QTextEdit(self)
         self._info.setReadOnly(True)
-        self._info.setMaximumHeight(50)
+        # self._info.setMaximumHeight(50)
         layout = QHBoxLayout()
         layout.addWidget(self._info, stretch=True)
         self.setLayout(layout)
@@ -64,12 +65,15 @@ class QtReloadWidget(QWidget):
         self._set_paths(all_paths)
         self.path_to_index_map = mapping
 
-    @staticmethod
-    def _get_file_paths(path: Path):
+    def _get_file_paths(self, path: Path):
         paths = []
         py = 0
         for new_path in path.glob("**/*.py"):
+            # exclude __ini__ files since they won't be reloaded
             if new_path.name == "__init__.py":
+                continue
+            # exclude test files
+            elif new_path.name.startswith("test_"):
                 continue
             paths.append(str(new_path))
             py += 1
