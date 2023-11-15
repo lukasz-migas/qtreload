@@ -7,7 +7,6 @@ from pathlib import Path
 IS_WIN = sys.platform == "win32"
 
 
-
 def get_import_path(module: str) -> ty.Optional[Path]:
     """Get module path."""
     module = pkgutil.get_loader(module)
