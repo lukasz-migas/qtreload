@@ -1,13 +1,15 @@
 """Install hot-reload module."""
+from __future__ import annotations
 import os
 
 from qtreload.qt_reload import QtReloadWidget
+from qtpy.QtWidgets import QWidget
 
 # store reference to QtReloadWidget to prevent garbage collection
 _reload_ref = None
 
 
-def install_hot_reload(parent):
+def install_hot_reload(parent: QWidget | None = None) -> QtReloadWidget | None:
     """Install hot-reload module - recommended for developers only."""
     global _reload_ref
 

@@ -21,7 +21,7 @@ from qtpy.QtWidgets import (
 from superqt.utils import qthrottled
 
 from qtreload.pydevd_reload import xreload
-from qtreload.utilities import get_import_path, path_to_module
+from qtreload.utilities import get_import_path, get_module_paths, path_to_module
 
 logger = getLogger(__name__)
 
@@ -32,12 +32,26 @@ TIME_FMT = "%Y-%m-%d %H:%M:%S"
 class QtReloadWidget(QWidget):
     """Reload Widget."""
 
-    evt_theme = Signal()
+    evt_pyfile = Signal(str)
+    evt_stylesheet = Signal()
 
-    def __init__(self, modules: ty.Iterable[str], parent=None, auto_connect: bool = True) -> None:
+    def __init__(
+        self,
+        modules: ty.Iterable[str],
+        parent: QWidget | None = None,
+        auto_connect: bool = True,
+        py_pattern: tuple[str, ...] = ("**/*.py",),
+        ignore_py_pattern=("**/__init__.py", "**/test_*.py"),
+        stylesheet_pattern: tuple[str, ...] = ("**/*.qss",),
+    ) -> None:
         super().__init__(parent=parent)
         # setup stylesheet
         self.setStyleSheet("""QtReloadWidget QTextEdit { border: 2px solid #ff0000; border-radius: 2px;}""")
+
+        # pattern information
+        self.py_pattern = py_pattern
+        self.ignore_py_pattern = ignore_py_pattern
+        self.stylesheet_pattern = stylesheet_pattern
 
         # setup file watcher
         self._watcher = QFileSystemWatcher()
@@ -68,13 +82,15 @@ class QtReloadWidget(QWidget):
         main_layout.addWidget(self._info_text, stretch=True)
 
         # setup modules
-        paths = []
+        modules_, paths = [], []
         for module in modules:
             path = get_import_path(module)
             if path:
+                modules_.append(module)
                 paths.append(path)
                 self._modules_list.addItem(module)
                 self.log_message(f"Watching for changes in '{path}'")
+        self._modules = modules_
         self._module_paths = paths
         self.path_to_index_map = {}
         if self._module_paths and auto_connect:
@@ -90,6 +106,7 @@ class QtReloadWidget(QWidget):
         if not path:
             self.log_message(f"Could not find path for the module '{module}")
             return
+        self._modules.append(module)
         self._module_paths.append(path)
         self._modules_list.addItem(module)
         self._add_module_text.clear()
@@ -129,35 +146,24 @@ class QtReloadWidget(QWidget):
         """Set paths."""
         all_paths = []
         mapping = {}
-        for i, module_path in enumerate(self._module_paths):
+        for i, module in enumerate(self._modules):
+            module_path = get_import_path(module)
             if module_path:
-                paths = self._get_file_paths(module_path)
+                paths = self._get_file_paths(module)
                 all_paths += paths
                 for _path in paths:
                     mapping[_path] = i
         self._set_paths(all_paths)
         self.path_to_index_map = mapping
 
-    def _get_file_paths(self, path: Path):
-        paths = []
-        py = 0
-        for new_path in path.glob("**/*.py"):
-            # exclude __ini__ files since they won't be reloaded
-            if new_path.name == "__init__.py":
-                continue
-            # exclude test files
-            elif new_path.name.startswith("test_"):
-                continue
-            paths.append(str(new_path))
-            py += 1
-        # get list of qss files
-        qss = 0
-        for new_path in path.glob("**/*.qss"):
-            paths.append(str(new_path))
-            qss += 1
-        paths = list(set(paths))
-        self.log_message(f"Found {py} python files and {qss} qss files '{path.name}'")
-        return paths
+    def _get_file_paths(self, module: str) -> list[str]:
+        """Get file paths."""
+        py_paths, qss_paths = get_module_paths(module)
+        py = len(py_paths)
+        qss = len(qss_paths)
+        self.log_message(f"Found {py} python files and {qss} qss files '{module}'")
+        paths = py_paths + qss_paths
+        return [str(p) for p in paths]
 
     def _set_paths(self, paths: list[str]):
         self.log_message(f"Added {len(paths)} paths to watcher")
@@ -188,11 +194,12 @@ class QtReloadWidget(QWidget):
             module = path_to_module(path, self.get_module_path_for_path(path))
             res = xreload(importlib.import_module(module))
             self.log_message(f"{now} - '{module}' (changed={res})")
+            self.evt_pyfile.emit(module)
         except Exception as e:
             self.log_message(f"{now} - failed to reload '{path}' Error={e}...")
 
     def _reload_qss(self, path: str):
-        self.evt_theme.emit()
+        self.evt_stylesheet.emit()
         now = datetime.now().strftime(TIME_FMT)
         self.log_message(f"{now} - '{Path(path).name}' changed")
 
