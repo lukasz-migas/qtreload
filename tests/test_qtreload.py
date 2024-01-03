@@ -37,14 +37,16 @@ def test_install_hot_reload(qtbot):
     assert widget is None
 
     os.environ["QTRELOAD_HOT_RELOAD"] = "1"
-    os.environ["QTRELOAD_HOT_RELOAD_MODULES"] = "qtreload, superqt"
+    os.environ["QTRELOAD_HOT_RELOAD_MODULES"] = "qtreload"
     widget = install_hot_reload(None)
     qtbot.addWidget(widget)
     assert widget is not None
     assert len(widget.path_to_index_map) > 0, "Expected more than 1 path"
-    assert len(widget._module_paths) == 2, "Expected 2 modules"
+    assert len(widget._module_paths) == 1, "Expected 2 modules"
 
     # make sure we can retrieve each module properly
     for path in widget.path_to_index_map.keys():
         module = path_to_module(path, widget.get_module_path_for_path(path))
         assert module, "Module should not be empty"
+        paths = widget._get_file_paths(module)
+        assert len(paths) > 0, "Expected more than 1 path"

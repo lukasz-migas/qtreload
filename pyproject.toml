@@ -122,7 +122,9 @@ line_length = 120
 [tool.pytest.ini_options]
 minversion = "6.0"
 testpaths = ["tests"]
-filterwarnings = ["error"]
+filterwarnings = [
+    "error"
+]
 
 # https://mypy.readthedocs.io/en/stable/config_file.html
 [tool.mypy]
@@ -131,7 +133,7 @@ strict = true
 disallow_any_generics = false
 disallow_subclassing_any = false
 show_error_codes = true
-pretty = true
+pretty = false
 
 # # module specific overrides
 # [[tool.mypy.overrides]]

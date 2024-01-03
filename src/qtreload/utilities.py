@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import pkgutil
 import sys
-import typing as ty
 from pathlib import Path
 
 IS_WIN = sys.platform == "win32"
