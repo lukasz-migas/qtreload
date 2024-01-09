@@ -51,7 +51,7 @@ Using `QtReloadWidget`:
 from qtreload import QtReloadWidget
 
 # you can specify list of modules that should be monitored
-list_of_modules = ["napari", "spyder", "..."]
+list_of_modules = ["napari", "napari_plugin", "..."]
 
 widget = QtReloadWidget(list_of_modules)
 
@@ -65,14 +65,17 @@ Using `install_hot_reload` requires two environment variables being set, namely:
 
 ```
 QTRELOAD_HOT_RELOAD=1
-QTRELOAD_HOT_RELOAD_MODULES="napari,spyder"
+QTRELOAD_HOT_RELOAD_MODULES="napari,napari_plugin"
 ```
 
 Then you can execute the following:
 ```
 from qtreload.install import install_hot_reload
 
-install_hot_reload()
+widget = install_hot_reload()
+
+# add the widget to your application (or keep reference to it so it's not garbage collected)
+app.layout().addWidget(widget)
 ```
 
 ## When it works like magic
@@ -81,7 +84,7 @@ install_hot_reload()
 
  - You are running your application where you have method `on_run` but when you execute this function, you notice that you misspelled some variable. In normal circumstances you would need to restart the application. Now, however, you can correct it in your IDE, save, and try running again.
  - You are running your application and are modifying the layout of a popup window. Now you can do this and each time the dialog is reshown, the new version of the dialog will be shown.
- - You are modifying a Qt style file (`*.qss`) and want to see the changes immediately.
+ - You are modifying a Qt style file (`*.qss`) and want to see the changes immediately (subscribe to `evt_stylesheet`)
 
 ## Limitations
 
