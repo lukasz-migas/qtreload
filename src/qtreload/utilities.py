@@ -20,8 +20,8 @@ def _get_paths_for_pattern(path: Path, patterns: tuple[str, ...]) -> list[Path]:
 def get_module_paths(
     module: str,
     py_pattern: tuple[str, ...] = ("**/*.py",),
-    ignore_py_pattern=("__init__.py",),
-    stylesheet_pattern: tuple[str, ...] = ("*.qss",),
+    ignore_py_pattern=("**/__init__.py", "**/test_*.py"),
+    stylesheet_pattern: tuple[str, ...] = ("**/*.qss",),
 ) -> tuple[list[Path], list[Path]]:
     """Get module paths."""
     module_path = get_import_path(module)

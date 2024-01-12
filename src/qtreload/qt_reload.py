@@ -158,7 +158,12 @@ class QtReloadWidget(QWidget):
 
     def _get_file_paths(self, module: str) -> list[str]:
         """Get file paths."""
-        py_paths, qss_paths = get_module_paths(module)
+        py_paths, qss_paths = get_module_paths(
+            module,
+            py_pattern=self.py_pattern,
+            ignore_py_pattern=self.ignore_py_pattern,
+            stylesheet_pattern=self.stylesheet_pattern,
+        )
         py = len(py_paths)
         qss = len(qss_paths)
         self.log_message(f"Found {py} python files and {qss} qss files '{module}'")
