@@ -59,12 +59,24 @@ class QtReloadWidget(QWidget):
         self._add_module_text = QLineEdit(self)
         self._modules_list = QListWidget()
         self._modules_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+
         self._add_btn = QPushButton("Add")
         self._add_btn.setToolTip("Add module to watch list. Module name is taken from the text field above.")
         self._add_btn.clicked.connect(self.on_add_module)
+
         self._remove_btn = QPushButton("Remove")
         self._remove_btn.setToolTip("Remove selected modules from the watch list.")
         self._remove_btn.clicked.connect(self.on_remove_module)
+
+        self._reload_py_btn = QPushButton("Reload python files")
+        self._reload_py_btn.setToolTip(
+            "Reload all python files. This can be fairly slow if there are a lot files to reload."
+        )
+        self._reload_py_btn.clicked.connect(self.on_reload_py_files)
+
+        self._reload_qss_btn = QPushButton("Reload stylesheet files")
+        self._reload_qss_btn.setToolTip("Reload all QSS files.")
+        self._reload_qss_btn.clicked.connect(self.on_reload_stylesheet_files)
 
         self._info_text = QTextEdit(self)
         self._info_text.setReadOnly(True)
@@ -76,6 +88,10 @@ class QtReloadWidget(QWidget):
         btn_layout.addWidget(self._remove_btn)
         layout.addLayout(btn_layout)
         layout.addWidget(self._modules_list)
+        btn_layout = QHBoxLayout()
+        btn_layout.addWidget(self._reload_py_btn)
+        btn_layout.addWidget(self._reload_qss_btn)
+        layout.addLayout(btn_layout)
 
         main_layout = QHBoxLayout(self)
         main_layout.addLayout(layout)
@@ -181,6 +197,16 @@ class QtReloadWidget(QWidget):
         if index is None:
             raise ValueError("Path not found in module paths")
         return self._module_paths[index]
+
+    def on_reload_py_files(self) -> None:
+        """Reload python files."""
+        for path in self._watcher.files():
+            if path.endswith(".py"):
+                self._reload_py(path)
+
+    def on_reload_stylesheet_files(self):
+        self.log_message("Reloading all stylesheet files...")
+        self.evt_stylesheet.emit()
 
     @qthrottled(timeout=500, leading=False)
     def on_reload_file(self, path: str):
