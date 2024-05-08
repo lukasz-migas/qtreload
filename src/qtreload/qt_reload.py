@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib
 import typing as ty
+from contextlib import suppress
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path
@@ -43,11 +44,17 @@ class QtReloadWidget(QWidget):
         py_pattern: tuple[str, ...] = ("**/*.py",),
         ignore_py_pattern=("**/__init__.py", "**/test_*.py"),
         stylesheet_pattern: tuple[str, ...] = ("**/*.qss",),
+        log_func: ty.Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(parent=parent)
         # setup stylesheet
         self.setStyleSheet("""QtReloadWidget QTextEdit { border: 2px solid #ff0000; border-radius: 2px;}""")
 
+        if log_func is None:
+
+            def log_func(x):
+                return None
+        self.log_func = log_func
         # pattern information
         self.py_pattern = py_pattern
         self.ignore_py_pattern = ignore_py_pattern
@@ -236,5 +243,7 @@ class QtReloadWidget(QWidget):
 
     def log_message(self, msg: str):
         """Log message."""
-        self._info_text.append(msg)
+        with suppress(Exception):
+            self._info_text.append(msg)
         logger.debug(msg)
+        self.log_func(msg)
