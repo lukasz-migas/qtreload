@@ -8,10 +8,12 @@ from datetime import datetime
 from logging import getLogger
 from pathlib import Path
 
-from qtpy.QtCore import QFileSystemWatcher, Signal
+from qtpy.QtCore import QFileSystemWatcher, Qt, Signal
 from qtpy.QtWidgets import (
     QAbstractItemView,
+    QDialog,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QListWidget,
     QPushButton,
@@ -54,6 +56,7 @@ class QtReloadWidget(QWidget):
 
             def log_func(x):
                 return None
+
         self.log_func = log_func
         # pattern information
         self.py_pattern = py_pattern
@@ -247,3 +250,30 @@ class QtReloadWidget(QWidget):
             self._info_text.append(msg)
         logger.debug(msg)
         self.log_func(msg)
+
+
+class QDevPopup(QDialog):
+    def __init__(self, parent: QWidget, modules: list[str]):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.modules = modules
+
+        self.qdev = QtReloadWidget(self.modules, self)
+
+        title = QLabel()
+        title.setText("Developer tools")
+        close_btn = QPushButton()
+        close_btn.setText("Hide")
+        close_btn.clicked.connect(self.hide)
+
+        title_layout = QHBoxLayout()
+        title_layout.setSpacing(0)
+        title_layout.setContentsMargins(2, 2, 2, 2)
+        title_layout.addWidget(title, stretch=True)
+        title_layout.addWidget(close_btn)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.addLayout(title_layout)
+        layout.addWidget(self.qdev, stretch=True)
