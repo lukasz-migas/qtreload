@@ -65,7 +65,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - uses: tlambert03/setup-qt-libs@v1.7
+      - uses: tlambert03/setup-qt-libs@v1.8
 
       - name: Linux opengl
         if: runner.os == 'Linux' && ( matrix.backend == 'pyside6' || matrix.backend == 'pyqt6' )
