@@ -86,7 +86,7 @@ jobs:
           BACKEND: ${{ matrix.backend }}
 
       - name: Coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
 
   # test_old_qtpy:
   #   name: qtpy minreq
