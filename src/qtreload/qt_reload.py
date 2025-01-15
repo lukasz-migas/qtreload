@@ -63,8 +63,6 @@ class QtReloadWidget(QWidget):
         log_func: ty.Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(parent=parent)
-        # setup stylesheet
-        self.setStyleSheet("""QtReloadWidget QTextEdit { border: 2px solid #ff0000; border-radius: 2px;}""")
 
         if log_func is None:
 
@@ -135,6 +133,8 @@ class QtReloadWidget(QWidget):
         # setup modules
         modules_, paths = [], []
         for module in modules:
+            if module in modules_:
+                continue
             path = get_import_path(module)
             if path:
                 modules_.append(module)
@@ -147,11 +147,14 @@ class QtReloadWidget(QWidget):
         if self._module_paths and auto_connect:
             self.setup_paths()
 
-    def on_add_module(self):
+    def on_add_module(self) -> None:
         """Add new module to the list."""
         module = self._add_module_text.text()
         if not module:
             self.log_message(f"The specified module '{module}' does not exist.")
+            return
+        if module in self._modules:
+            self.log_message(f"The module '{module}' is already in the list.")
             return
         path = get_import_path(module)
         if not path:
@@ -163,16 +166,19 @@ class QtReloadWidget(QWidget):
         self._add_module_text.clear()
         self.setup_paths(clear=True, connect=False)
 
-    def on_remove_module(self):
+    def on_remove_module(self) -> None:
         """Remove module(s) from the list."""
         items = self._modules_list.selectedItems()
         if not items:
             self.log_message("No modules selected.")
             return
         indices = [self._modules_list.row(item) for item in items]
+        modules = [item.text() for item in items]
         for index in sorted(indices, reverse=True):
             self._modules_list.takeItem(index)
             self._module_paths.pop(index)
+        for module in modules:
+            self._modules.remove(module)
         self.setup_paths(clear=True, connect=False)
 
     def setup_paths(self, clear: bool = False, connect: bool = True):
@@ -246,7 +252,7 @@ class QtReloadWidget(QWidget):
 
     def on_toggle_widget_borders(self, state: int) -> None:
         """Toggle widget borders."""
-        window = get_main_window()
+        window = get_main_window() or self.parent() or self
         if not window:
             return
         tmp_stylesheet = "QWidget { border: 1px solid #ff0000;}"
@@ -292,7 +298,7 @@ class QtReloadWidget(QWidget):
         self.log_func(msg)
 
 
-class QDevPopup(QDialog):
+class QtDevPopup(QDialog):
     """Popup dialog."""
 
     def __init__(self, parent: QWidget, modules: list[str]):
