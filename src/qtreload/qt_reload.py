@@ -1,4 +1,5 @@
 """Hot-reload widget."""
+
 from __future__ import annotations
 
 import importlib
@@ -11,11 +12,14 @@ from pathlib import Path
 from qtpy.QtCore import QFileSystemWatcher, Qt, Signal
 from qtpy.QtWidgets import (
     QAbstractItemView,
+    QApplication,
+    QCheckBox,
     QDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
+    QMainWindow,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
@@ -30,6 +34,16 @@ logger = getLogger(__name__)
 
 
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
+
+
+def get_main_window() -> QMainWindow | None:
+    """Get main window."""
+    app = QApplication.instance()
+    if app:
+        for i in app.topLevelWidgets():
+            if isinstance(i, QMainWindow):  # pragma: no cover
+                return i
+    return None
 
 
 class QtReloadWidget(QWidget):
@@ -88,22 +102,33 @@ class QtReloadWidget(QWidget):
         self._reload_qss_btn.setToolTip("Reload all QSS files.")
         self._reload_qss_btn.clicked.connect(self.on_reload_stylesheet_files)
 
+        self._enable_widget_borders = QCheckBox("Show widget borders")
+        self._enable_widget_borders.setToolTip("Show borders around each widget in the app.")
+        self._enable_widget_borders.stateChanged.connect(self.on_toggle_widget_borders)
+
         self._info_text = QTextEdit(self)
         self._info_text.setReadOnly(True)
 
         layout = QVBoxLayout()
+        layout.setSpacing(2)
         layout.addWidget(self._add_module_text)
+
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(2)
         btn_layout.addWidget(self._add_btn)
         btn_layout.addWidget(self._remove_btn)
         layout.addLayout(btn_layout)
         layout.addWidget(self._modules_list)
+        layout.addWidget(self._enable_widget_borders)
+
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(2)
         btn_layout.addWidget(self._reload_py_btn)
         btn_layout.addWidget(self._reload_qss_btn)
         layout.addLayout(btn_layout)
 
         main_layout = QHBoxLayout(self)
+        main_layout.setSpacing(2)
         main_layout.addLayout(layout)
         main_layout.addWidget(self._info_text, stretch=True)
 
@@ -215,8 +240,23 @@ class QtReloadWidget(QWidget):
                 self._reload_py(path)
 
     def on_reload_stylesheet_files(self):
+        """Reload all stylesheet files."""
         self.log_message("Reloading all stylesheet files...")
         self.evt_stylesheet.emit()
+
+    def on_toggle_widget_borders(self, state: int) -> None:
+        """Toggle widget borders."""
+        window = get_main_window()
+        if not window:
+            return
+        tmp_stylesheet = "QWidget { border: 1px solid #ff0000;}"
+        stylesheet = window.styleSheet()
+        if state:
+            stylesheet += "\n" + tmp_stylesheet
+        else:
+            stylesheet = stylesheet.replace(tmp_stylesheet, "")
+        window.setStyleSheet(stylesheet)
+        self.log_message(f"Toggled widget borders (state={state})")
 
     @qthrottled(timeout=500, leading=False)
     def on_reload_file(self, path: str):
@@ -230,22 +270,22 @@ class QtReloadWidget(QWidget):
             self._reload_qss(path)
 
     def _reload_py(self, path: str):
-        now = datetime.now().strftime(TIME_FMT)
         try:
             module = path_to_module(path, self.get_module_path_for_path(path))
             res = xreload(importlib.import_module(module))
-            self.log_message(f"{now} - '{module}' (changed={res})")
+            self.log_message(f"'{module}' (changed={res})")
             self.evt_pyfile.emit(module)
         except Exception as e:
-            self.log_message(f"{now} - failed to reload '{path}' Error={e}...")
+            self.log_message(f"failed to reload '{path}' Error={e}...")
 
     def _reload_qss(self, path: str):
         self.evt_stylesheet.emit()
-        now = datetime.now().strftime(TIME_FMT)
-        self.log_message(f"{now} - '{Path(path).name}' changed")
+        self.log_message(f"'{Path(path).name}' changed")
 
     def log_message(self, msg: str):
         """Log message."""
+        now = datetime.now().strftime(TIME_FMT)
+        msg = f"{now} - {msg}"
         with suppress(Exception):
             self._info_text.append(msg)
         logger.debug(msg)
@@ -253,10 +293,14 @@ class QtReloadWidget(QWidget):
 
 
 class QDevPopup(QDialog):
+    """Popup dialog."""
+
     def __init__(self, parent: QWidget, modules: list[str]):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setMinimumWidth(800)
+
         self.modules = modules
 
         self.qdev = QtReloadWidget(self.modules, self)
@@ -274,6 +318,7 @@ class QDevPopup(QDialog):
         title_layout.addWidget(close_btn)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(2)
+        layout.setContentsMargins(2, 2, 2, 2)
         layout.addLayout(title_layout)
         layout.addWidget(self.qdev, stretch=True)
