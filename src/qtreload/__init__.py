@@ -12,4 +12,4 @@ except PackageNotFoundError:
 
 __author__ = "Lukasz G. Migas"
 __email__ = "lukas.migas@yahoo.com"
-__all__ = ["QtReloadWidget", "install_hot_reload", "QtDevPopup"]
+__all__ = ["QtDevPopup", "QtReloadWidget", "install_hot_reload"]

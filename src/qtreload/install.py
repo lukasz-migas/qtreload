@@ -1,10 +1,12 @@
 """Install hot-reload module."""
 
 from __future__ import annotations
+
 import os
 
-from qtreload.qt_reload import QtReloadWidget
 from qtpy.QtWidgets import QWidget
+
+from qtreload.qt_reload import QtReloadWidget
 
 # store reference to QtReloadWidget to prevent garbage collection
 _reload_ref = None
