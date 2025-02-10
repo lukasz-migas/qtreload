@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import pkgutil
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -41,10 +41,10 @@ def get_module_paths(
 
 def get_import_path(module: str) -> Path | None:
     """Get the module path."""
-    module = pkgutil.get_loader(module)
-    if module is None:
+    loader = importlib.util.find_spec(module)
+    if loader is None:
         return None
-    path = Path(module.get_filename())
+    path = Path(loader.origin)
     return path.parent
 
 
