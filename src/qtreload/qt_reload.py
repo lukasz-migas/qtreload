@@ -160,6 +160,7 @@ class QtReloadWidget(QWidget):
         if not path:
             self.log_message(f"Could not find path for the module '{module}")
             return
+        self.log_message(f"Watching for changes in '{path}'")
         self._modules.append(module)
         self._module_paths.append(path)
         self._modules_list.addItem(module)
