@@ -12,7 +12,6 @@ from pathlib import Path
 from qtpy.QtCore import QFileSystemWatcher, Qt, Signal
 from qtpy.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QCheckBox,
     QDialog,
     QHBoxLayout,
@@ -35,9 +34,9 @@ logger = getLogger(__name__)
 
 
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
+
 PY_PATTERN = ("**/*.py",)
-# PY_IGNORE_PATTERN = ("**/__init__.py", "**/test_*.py")
-PY_IGNORE_PATTERN = ("**/test_*.py",)
+PY_IGNORE_PATTERN = ("**/__init__.py", "**/test_*.py")
 STYLESHEET_PATTERN = ("**/*.qss",)
 
 
@@ -94,6 +93,10 @@ class QtReloadWidget(QWidget):
         self._remove_btn.setToolTip("Remove selected modules from the watch list.")
         self._remove_btn.clicked.connect(self.on_remove_module)
 
+        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.setToolTip("Reload list of files for all modules.")
+        self._refresh_btn.clicked.connect(self.on_refresh_filelist)
+
         self._modules_list = QListWidget()
         self._modules_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
@@ -145,6 +148,7 @@ class QtReloadWidget(QWidget):
         add_btn_layout.setSpacing(2)
         add_btn_layout.addWidget(self._add_btn)
         add_btn_layout.addWidget(self._remove_btn)
+        add_btn_layout.addWidget(self._refresh_btn)
 
         reload_btn_layout = QHBoxLayout()
         reload_btn_layout.setSpacing(2)
@@ -195,13 +199,13 @@ class QtReloadWidget(QWidget):
         self.py_pattern = tuple(py.strip() for py in py_pattern)
         ignore_py_pattern = tuple(self._py_ignore_pattern_text.text().split(","))
         self.ignore_py_pattern = tuple(py.strip() for py in ignore_py_pattern)
-        self.setup_paths(clear=True, connect=False)
+        self.on_refresh_filelist()
 
     def on_stylesheet_pattern_changed(self) -> None:
         """Update stylesheet pattern."""
         stylesheet_pattern = tuple(self._stylesheet_pattern_text.text().split(","))
         self.stylesheet_pattern = tuple(py.strip() for py in stylesheet_pattern)
-        self.setup_paths(clear=True, connect=False)
+        self.on_refresh_filelist()
 
     def on_add_module(self) -> None:
         """Add new module to the list."""
@@ -221,7 +225,7 @@ class QtReloadWidget(QWidget):
         self._module_paths.append(path)
         self._modules_list.addItem(module)
         self._add_module_text.clear()
-        self.setup_paths(clear=True, connect=False)
+        self.on_refresh_filelist()
 
     def on_remove_module(self) -> None:
         """Remove module(s) from the list."""
@@ -236,6 +240,10 @@ class QtReloadWidget(QWidget):
             self._module_paths.pop(index)
         for module in modules:
             self._modules.remove(module)
+        self.on_refresh_filelist()
+
+    def on_refresh_filelist(self) -> None:
+        """Refresh file list."""
         self.setup_paths(clear=True, connect=False)
 
     def setup_paths(self, clear: bool = False, connect: bool = True) -> None:

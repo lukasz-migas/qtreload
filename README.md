@@ -93,7 +93,7 @@ While this approach can be extremely useful and can save a lot of time, it has a
 - code within the `___init__.py` cannot be reloaded (most of the time)
 - some changes to GUI code cannot be hot-reloaded - if e.g., you are modifying the `QMainWindow` and just added a new button, this button will not be shown. In order to show it, you will still need to restart the application. If, however, you were modifying a plugin or a dialog that is shown upon clicking on e.g. menu item, these changes WILL take place.
 - modifying python properties (@setter/@getter) is not always reloaded (they will be reflected if you are adding a new property but not if you are changing existing property)
-
+- new files are not reloaded since they were not initially added to the `watched` list - you can refresh file list
 
 ## Acknowledgements
 
