@@ -21,6 +21,7 @@ from qtpy.QtWidgets import (
     QListWidget,
     QMainWindow,
     QPushButton,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -34,6 +35,10 @@ logger = getLogger(__name__)
 
 
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
+PY_PATTERN = ("**/*.py",)
+# PY_IGNORE_PATTERN = ("**/__init__.py", "**/test_*.py")
+PY_IGNORE_PATTERN = ("**/test_*.py",)
+STYLESHEET_PATTERN = ("**/*.qss",)
 
 
 def get_main_window() -> QMainWindow | None:
@@ -57,9 +62,9 @@ class QtReloadWidget(QWidget):
         modules: ty.Iterable[str],
         parent: QWidget | None = None,
         auto_connect: bool = True,
-        py_pattern: tuple[str, ...] = ("**/*.py",),
-        ignore_py_pattern=("**/__init__.py", "**/test_*.py"),
-        stylesheet_pattern: tuple[str, ...] = ("**/*.qss",),
+        py_pattern: tuple[str, ...] = PY_PATTERN,
+        ignore_py_pattern: tuple[str, ...] = PY_IGNORE_PATTERN,
+        stylesheet_pattern: tuple[str, ...] = STYLESHEET_PATTERN,
         log_func: ty.Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(parent=parent)
@@ -79,8 +84,7 @@ class QtReloadWidget(QWidget):
         self._watcher = QFileSystemWatcher()
 
         self._add_module_text = QLineEdit(self)
-        self._modules_list = QListWidget()
-        self._modules_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._add_module_text.editingFinished.connect(self.on_add_module)
 
         self._add_btn = QPushButton("Add")
         self._add_btn.setToolTip("Add module to watch list. Module name is taken from the text field above.")
@@ -89,6 +93,30 @@ class QtReloadWidget(QWidget):
         self._remove_btn = QPushButton("Remove")
         self._remove_btn.setToolTip("Remove selected modules from the watch list.")
         self._remove_btn.clicked.connect(self.on_remove_module)
+
+        self._modules_list = QListWidget()
+        self._modules_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+
+        self._py_pattern_text = QLineEdit(self)
+        self._py_pattern_text.setText(", ".join(py_pattern))
+        self._py_pattern_text.setToolTip(
+            "Python file patterns to watch for changes. Use comma to separate patterns. Spaces will be stripped."
+        )
+        self._py_pattern_text.editingFinished.connect(self.on_py_pattern_changed)
+
+        self._py_ignore_pattern_text = QLineEdit(self)
+        self._py_ignore_pattern_text.setText(", ".join(ignore_py_pattern))
+        self._py_ignore_pattern_text.setToolTip(
+            "Python file patterns to ignore during discovery. Use comma to separate. Spaces will be stripped."
+        )
+        self._py_ignore_pattern_text.editingFinished.connect(self.on_py_pattern_changed)
+
+        self._stylesheet_pattern_text = QLineEdit(self)
+        self._stylesheet_pattern_text.setText(", ".join(stylesheet_pattern))
+        self._stylesheet_pattern_text.setToolTip(
+            "Stylesheet file patterns to watch for changes. Use comma to separate. Spaces will be stripped."
+        )
+        self._stylesheet_pattern_text.editingFinished.connect(self.on_stylesheet_pattern_changed)
 
         self._reload_py_btn = QPushButton("Reload python files")
         self._reload_py_btn.setToolTip(
@@ -104,31 +132,45 @@ class QtReloadWidget(QWidget):
         self._enable_widget_borders.setToolTip("Show borders around each widget in the app.")
         self._enable_widget_borders.stateChanged.connect(self.on_toggle_widget_borders)
 
-        self._info_text = QTextEdit(self)
-        self._info_text.setReadOnly(True)
+        self._log_edit = QTextEdit(self)
+        self._log_edit.setReadOnly(True)
+
+        self._files_list = QListWidget(self)
+
+        tabs = QTabWidget(self)
+        tabs.addTab(self._log_edit, "Log")
+        tabs.addTab(self._files_list, "Files")
+
+        add_btn_layout = QHBoxLayout()
+        add_btn_layout.setSpacing(2)
+        add_btn_layout.addWidget(self._add_btn)
+        add_btn_layout.addWidget(self._remove_btn)
+
+        reload_btn_layout = QHBoxLayout()
+        reload_btn_layout.setSpacing(2)
+        reload_btn_layout.addWidget(self._reload_py_btn)
+        reload_btn_layout.addWidget(self._reload_qss_btn)
 
         layout = QVBoxLayout()
         layout.setSpacing(2)
+        layout.addWidget(QLabel("Modules"))
         layout.addWidget(self._add_module_text)
-
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(2)
-        btn_layout.addWidget(self._add_btn)
-        btn_layout.addWidget(self._remove_btn)
-        layout.addLayout(btn_layout)
+        layout.addLayout(add_btn_layout)
         layout.addWidget(self._modules_list)
         layout.addWidget(self._enable_widget_borders)
 
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(2)
-        btn_layout.addWidget(self._reload_py_btn)
-        btn_layout.addWidget(self._reload_qss_btn)
-        layout.addLayout(btn_layout)
+        layout.addWidget(QLabel("Python pattern (comma separated)"))
+        layout.addWidget(self._py_pattern_text)
+        layout.addWidget(QLabel("Python ignore pattern (comma separated)"))
+        layout.addWidget(self._py_ignore_pattern_text)
+        layout.addWidget(QLabel("Stylesheet pattern (comma separated)"))
+        layout.addWidget(self._stylesheet_pattern_text)
+        layout.addLayout(reload_btn_layout)
 
         main_layout = QHBoxLayout(self)
         main_layout.setSpacing(2)
         main_layout.addLayout(layout)
-        main_layout.addWidget(self._info_text, stretch=True)
+        main_layout.addWidget(tabs, stretch=True)
 
         # setup modules
         modules_, paths = [], []
@@ -143,9 +185,23 @@ class QtReloadWidget(QWidget):
                 self.log_message(f"Watching for changes in '{path}'")
         self._modules = modules_
         self._module_paths = paths
-        self.path_to_index_map = {}
+        self.path_to_index_map: dict[Path, int] = {}
         if self._module_paths and auto_connect:
             self.setup_paths()
+
+    def on_py_pattern_changed(self) -> None:
+        """Update python pattern."""
+        py_pattern = tuple(self._py_pattern_text.text().split(","))
+        self.py_pattern = tuple(py.strip() for py in py_pattern)
+        ignore_py_pattern = tuple(self._py_ignore_pattern_text.text().split(","))
+        self.ignore_py_pattern = tuple(py.strip() for py in ignore_py_pattern)
+        self.setup_paths(clear=True, connect=False)
+
+    def on_stylesheet_pattern_changed(self) -> None:
+        """Update stylesheet pattern."""
+        stylesheet_pattern = tuple(self._stylesheet_pattern_text.text().split(","))
+        self.stylesheet_pattern = tuple(py.strip() for py in stylesheet_pattern)
+        self.setup_paths(clear=True, connect=False)
 
     def on_add_module(self) -> None:
         """Add new module to the list."""
@@ -182,7 +238,7 @@ class QtReloadWidget(QWidget):
             self._modules.remove(module)
         self.setup_paths(clear=True, connect=False)
 
-    def setup_paths(self, clear: bool = False, connect: bool = True):
+    def setup_paths(self, clear: bool = False, connect: bool = True) -> None:
         """Setup paths."""
         if clear:
             self._remove_filenames()
@@ -190,7 +246,7 @@ class QtReloadWidget(QWidget):
         if connect:
             self._watcher.fileChanged.connect(self.on_reload_file)
 
-    def _remove_filenames(self):
+    def _remove_filenames(self) -> None:
         """Clear existing filenames."""
         files = self._watcher.files()
         if files:
@@ -200,7 +256,7 @@ class QtReloadWidget(QWidget):
             self._watcher.removePaths(directories)
         self.log_message(f"Removed {len(files)} files and {len(directories)} directories from watcher.")
 
-    def _add_filenames(self):
+    def _add_filenames(self) -> None:
         """Set paths."""
         all_paths = []
         mapping = {}
@@ -221,6 +277,7 @@ class QtReloadWidget(QWidget):
             py_pattern=self.py_pattern,
             ignore_py_pattern=self.ignore_py_pattern,
             stylesheet_pattern=self.stylesheet_pattern,
+            log_func=self.log_func,
         )
         py = len(py_paths)
         qss = len(qss_paths)
@@ -228,10 +285,13 @@ class QtReloadWidget(QWidget):
         paths = py_paths + qss_paths
         return [str(p) for p in paths]
 
-    def _set_paths(self, paths: list[str]):
+    def _set_paths(self, paths: list[str]) -> None:
         self.log_message(f"Added {len(paths)} paths to watcher")
         if paths:
             self._watcher.addPaths(paths)
+        self._files_list.clear()
+        for path in paths:
+            self._files_list.addItem(path)
 
     def get_module_path_for_path(self, path: str) -> Path:
         """Map path to module."""
@@ -246,7 +306,7 @@ class QtReloadWidget(QWidget):
             if path.endswith(".py"):
                 self._reload_py(path)
 
-    def on_reload_stylesheet_files(self):
+    def on_reload_stylesheet_files(self) -> None:
         """Reload all stylesheet files."""
         self.log_message("Reloading all stylesheet files...")
         self.evt_stylesheet.emit()
@@ -266,17 +326,17 @@ class QtReloadWidget(QWidget):
         self.log_message(f"Toggled widget borders (state={state})")
 
     @qthrottled(timeout=500, leading=False)
-    def on_reload_file(self, path: str):
+    def on_reload_file(self, path: str) -> None:
         """Reload all modules."""
         self._reload_file(path)
 
-    def _reload_file(self, path: str):
+    def _reload_file(self, path: str) -> None:
         if path.endswith(".py"):
             self._reload_py(path)
         elif path.endswith(".qss"):
             self._reload_qss(path)
 
-    def _reload_py(self, path: str):
+    def _reload_py(self, path: str) -> None:
         try:
             module = path_to_module(path, self.get_module_path_for_path(path))
             res = xreload(importlib.import_module(module))
@@ -285,16 +345,16 @@ class QtReloadWidget(QWidget):
         except Exception as e:
             self.log_message(f"failed to reload '{path}' Error={e}...")
 
-    def _reload_qss(self, path: str):
+    def _reload_qss(self, path: str) -> None:
         self.evt_stylesheet.emit()
         self.log_message(f"'{Path(path).name}' changed")
 
-    def log_message(self, msg: str):
+    def log_message(self, msg: str) -> None:
         """Log message."""
         now = datetime.now().strftime(TIME_FMT)
         msg = f"{now} - {msg}"
         with suppress(Exception):
-            self._info_text.append(msg)
+            self._log_edit.append(msg)
         logger.debug(msg)
         self.log_func(msg)
 
