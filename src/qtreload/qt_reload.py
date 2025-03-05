@@ -389,3 +389,14 @@ class QtDevPopup(QDialog):
         layout.setContentsMargins(2, 2, 2, 2)
         layout.addLayout(title_layout)
         layout.addWidget(self.qdev, stretch=True)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    import sys
+
+    from qtpy.QtWidgets import QApplication
+
+    app = QApplication([])
+    dlg = QtDevPopup(None, ["qtreload"])
+    dlg.show()
+    sys.exit(app.exec_())
