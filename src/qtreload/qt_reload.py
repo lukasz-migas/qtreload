@@ -12,6 +12,7 @@ from pathlib import Path
 from qtpy.QtCore import QFileSystemWatcher, Qt, Signal
 from qtpy.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QDialog,
     QHBoxLayout,
@@ -401,8 +402,6 @@ class QtDevPopup(QDialog):
 
 if __name__ == "__main__":  # pragma: no cover
     import sys
-
-    from qtpy.QtWidgets import QApplication
 
     app = QApplication([])
     dlg = QtDevPopup(None, ["qtreload"])
