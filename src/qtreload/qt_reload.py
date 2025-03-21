@@ -174,6 +174,7 @@ class QtReloadWidget(QWidget):
 
         main_layout = QHBoxLayout(self)
         main_layout.setSpacing(2)
+        main_layout.setContentsMargins(6, 6, 6, 6)
         main_layout.addLayout(layout)
         main_layout.addWidget(tabs, stretch=True)
 
