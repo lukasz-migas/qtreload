@@ -9,7 +9,8 @@ from datetime import datetime
 from logging import getLogger
 from pathlib import Path
 
-from qtpy.QtCore import QFileSystemWatcher, Qt, Signal
+from natsort import natsorted
+from qtpy.QtCore import QFileSystemWatcher, QModelIndex, Qt, Signal
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -37,7 +38,11 @@ logger = getLogger(__name__)
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 PY_PATTERN = ("**/*.py",)
-PY_IGNORE_PATTERN = ("**/__init__.py", "**/test_*.py")
+PY_IGNORE_PATTERN = (
+    "**/__init__.py",
+    "**/_version.py",
+    "**/test_*.py",
+)
 STYLESHEET_PATTERN = ("**/*.qss",)
 
 
@@ -140,6 +145,7 @@ class QtReloadWidget(QWidget):
         self._log_edit.setReadOnly(True)
 
         self._files_list = QListWidget(self)
+        self._files_list.doubleClicked.connect(self.on_double_click)
 
         tabs = QTabWidget(self)
         tabs.addTab(self._log_edit, "Log")
@@ -194,6 +200,11 @@ class QtReloadWidget(QWidget):
         self.path_to_index_map: dict[Path, int] = {}
         if self._module_paths and auto_connect:
             self.setup_paths()
+
+    def on_double_click(self, index: QModelIndex) -> None:
+        """Open file in editor."""
+        item = self._files_list.item(index.row())
+        self._reload_py(item.text())
 
     def on_py_pattern_changed(self) -> None:
         """Update python pattern."""
@@ -300,7 +311,7 @@ class QtReloadWidget(QWidget):
         if paths:
             self._watcher.addPaths(paths)
         self._files_list.clear()
-        for path in paths:
+        for path in natsorted(paths):
             self._files_list.addItem(path)
 
     def get_module_path_for_path(self, path: str) -> Path:

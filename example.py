@@ -1,4 +1,4 @@
-®"""SampleWidget that contains many types of QWidgets.
+"""SampleWidget that contains many types of QWidgets.
 
 This file and SampleWidget is useful for testing out themes from the command
 line or for generating screenshots of a sample widget to demonstrate a theme.
