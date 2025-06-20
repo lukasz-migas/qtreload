@@ -36,7 +36,6 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
 from qtreload import QtReloadWidget
 
 blurb = """

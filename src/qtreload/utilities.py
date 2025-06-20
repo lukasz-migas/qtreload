@@ -29,12 +29,24 @@ def _get_paths_for_pattern(path: Path, patterns: tuple[str, ...], log_func: ty.C
     return paths
 
 
+def get_import_path(module: str) -> Path | None:
+    """Get the module path."""
+    try:
+        loader = importlib.util.find_spec(module)
+    except ValueError as e:
+        raise ValueError(f"Module '{module}' not found.") from e
+    if loader is None:
+        return None
+    path = Path(loader.origin)
+    return path.parent
+
+
 def get_path_for_module(module: str) -> Path:
     """Get the path for a module."""
     module_path = get_import_path(module)
     if module_path is None:
         raise ValueError(f"Module '{module}' not found.")
-    return module_path
+    return module_path.resolve()
 
 
 def get_module_paths(
@@ -45,9 +57,7 @@ def get_module_paths(
     log_func: ty.Callable = noop,
 ) -> tuple[list[Path], list[Path]]:
     """Get module paths."""
-    module_path = get_import_path(module)
-    if module_path is None:
-        raise ValueError(f"Module '{module}' not found.")
+    module_path = get_path_for_module(module)
     module_paths = get_py_module_paths(module_path, py_pattern, ignore_py_pattern, log_func)
     stylesheet_paths = get_stylesheet_paths(module_path, stylesheet_pattern, log_func)
     return module_paths, stylesheet_paths
@@ -78,17 +88,8 @@ def get_stylesheet_paths(
     return stylesheet_paths
 
 
-def get_import_path(module: str) -> Path | None:
-    """Get the module path."""
-    loader = importlib.util.find_spec(module)
-    if loader is None:
-        return None
-    path = Path(loader.origin)
-    return path.parent
-
-
 def path_to_module(path: str, module_path: Path) -> str:
-    """Turn module path into a module name."""
+    """Turn a module path into a module name."""
     module = path.split(str(module_path.parent))[1]
     if "src" in module:
         module = module.split("src")[1]
