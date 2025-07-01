@@ -90,7 +90,10 @@ def get_stylesheet_paths(
 
 def path_to_module(path: str, module_path: Path) -> str:
     """Turn a module path into a module name."""
-    module = path.split(str(module_path.parent))[1]
+    modules = path.split(str(module_path.parent))
+    if len(modules) < 2:
+        raise ValueError(f"Path '{path}' is not a subpath of '{module_path}'.")
+    module = modules[1]
     if "src" in module:
         module = module.split("src")[1]
     module = module.replace("\\", ".")[:-3] if IS_WIN else module.replace("/", ".")[:-3]
