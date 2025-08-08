@@ -144,12 +144,23 @@ class QtReloadWidget(QWidget):
         self._log_edit = QTextEdit(self)
         self._log_edit.setReadOnly(True)
 
+        self._file_filter = QLineEdit(self)
+        self._file_filter.setPlaceholderText("Filter files...")
+        self._file_filter.setToolTip("Start typing to filter files in the list...")
+        self._file_filter.textChanged.connect(self.on_filter_changed)
+        self._file_filter.editingFinished.connect(self.on_filter_changed)
+
         self._files_list = QListWidget(self)
         self._files_list.doubleClicked.connect(self.on_double_click)
 
+        files_tab = QWidget()
+        files_layout = QVBoxLayout(files_tab)
+        files_layout.addWidget(self._file_filter)
+        files_layout.addWidget(self._files_list)
+
         tabs = QTabWidget(self)
         tabs.addTab(self._log_edit, "Log")
-        tabs.addTab(self._files_list, "Files")
+        tabs.addTab(files_tab, "Files")
 
         add_btn_layout = QHBoxLayout()
         add_btn_layout.setSpacing(2)
@@ -194,7 +205,7 @@ class QtReloadWidget(QWidget):
                 modules_.append(module)
                 paths.append(path)
                 self._modules_list.addItem(module)
-                self.log_message(f"Watching for changes in '{path}'")
+                self.log_message(f"Watching for '{module}' changes in '{path}'")
         self._modules = modules_
         self._module_paths = paths
         self.path_to_index_map: dict[Path, int] = {}
@@ -233,7 +244,7 @@ class QtReloadWidget(QWidget):
         if not path:
             self.log_message(f"Could not find path for the module '{module}")
             return
-        self.log_message(f"Watching for changes in '{path}'")
+        self.log_message(f"Watching for '{module}' changes in '{path}'")
         self._modules.append(module)
         self._module_paths.append(path)
         self._modules_list.addItem(module)
@@ -266,6 +277,13 @@ class QtReloadWidget(QWidget):
         self._add_filenames()
         if connect:
             self._watcher.fileChanged.connect(self.on_reload_file)
+
+    def on_filter_changed(self, text: str | None = None) -> None:
+        """Filter files in the list."""
+        text = self._file_filter.text().strip()
+        for row in range(self._files_list.count()):
+            item = self._files_list.item(row)
+            item.setHidden(text not in item.text() if text else False)
 
     def _remove_filenames(self) -> None:
         """Clear existing filenames."""
