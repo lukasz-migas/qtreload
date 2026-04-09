@@ -1,14 +1,5 @@
 import os
 
-pytest_plugins = ["pytestqt.plugin"]
-
-try:
-    import qtpy
-    import pytestqt  # noqa: F401
-
-except Exception:
-    qtpy = None
-
 import pytest
 
 from qtreload.utilities import path_to_module
