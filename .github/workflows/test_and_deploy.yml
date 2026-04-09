@@ -26,6 +26,7 @@ jobs:
     name: Test UV (${{ matrix.backend }} ${{ matrix.python-version }} ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     env:
+      COVERAGE_RCFILE: pyproject.toml
       UV_NO_SYNC: "1"
       UV_MANAGED_PYTHON: "1"
     strategy:
@@ -56,7 +57,7 @@ jobs:
           qt: true
 
       - name: Test
-        run: uv run coverage run -p -m pytest -v --color=yes
+        run: uv run coverage run -p --source=src/qtreload -m pytest -v --color=yes
 
       - name: Upload coverage
         uses: actions/upload-artifact@v7
@@ -69,6 +70,8 @@ jobs:
     name: Combine and Upload Coverage
     needs: test_uv
     runs-on: ubuntu-latest
+    env:
+      COVERAGE_RCFILE: pyproject.toml
 
     steps:
       - uses: actions/checkout@v6
