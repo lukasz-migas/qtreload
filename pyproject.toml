@@ -165,6 +165,7 @@ exclude_lines = [
 ]
 [tool.coverage.run]
 source = ["src"]
+relative_files = true
 omit = [
     "*/pydevd_reload.py",
     "tests/**",
