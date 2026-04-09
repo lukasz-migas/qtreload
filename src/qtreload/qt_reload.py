@@ -76,7 +76,7 @@ class QtReloadWidget(QWidget):
 
         if log_func is None:
 
-            def log_func(x):
+            def log_func(_: str) -> None:
                 return None
 
         self.log_func = log_func
@@ -84,6 +84,7 @@ class QtReloadWidget(QWidget):
         self.py_pattern = py_pattern
         self.ignore_py_pattern = ignore_py_pattern
         self.stylesheet_pattern = stylesheet_pattern
+        self.widgets = []
 
         # setup file watcher
         self._watcher = QFileSystemWatcher()
@@ -208,12 +209,38 @@ class QtReloadWidget(QWidget):
                 self.log_message(f"Watching for '{module}' changes in '{path}'")
         self._modules = modules_
         self._module_paths = paths
-        self.path_to_index_map: dict[Path, int] = {}
+        self.path_to_index_map: dict[str, int] = {}
         if self._module_paths and auto_connect:
             self.setup_paths()
 
+    def register_widget(self, widget: QWidget) -> None:
+        """Register a QWidget as a child widget."""
+        self.widgets.append(widget)
+
+    def replace_modules(self, modules: ty.Iterable[str]) -> None:
+        """Replace the watched module list and refresh watched paths."""
+        deduplicated_modules: list[str] = []
+        deduplicated_paths: list[Path] = []
+        self._modules_list.clear()
+
+        for module in modules:
+            if module in deduplicated_modules:
+                continue
+            path = get_import_path(module)
+            if path is None:
+                self.log_message(f"Could not find path for the module '{module}'")
+                continue
+            deduplicated_modules.append(module)
+            deduplicated_paths.append(path)
+            self._modules_list.addItem(module)
+            self.log_message(f"Watching for '{module}' changes in '{path}'")
+
+        self._modules = deduplicated_modules
+        self._module_paths = deduplicated_paths
+        self.on_refresh_filelist()
+
     def on_double_click(self, index: QModelIndex) -> None:
-        """Open file in editor."""
+        """Reload the module associated with the selected file."""
         item = self._files_list.item(index.row())
         self._reload_py(item.text())
 
@@ -242,7 +269,7 @@ class QtReloadWidget(QWidget):
             return
         path = get_import_path(module)
         if not path:
-            self.log_message(f"Could not find path for the module '{module}")
+            self.log_message(f"Could not find path for the module '{module}'")
             return
         self.log_message(f"Watching for '{module}' changes in '{path}'")
         self._modules.append(module)
@@ -362,6 +389,14 @@ class QtReloadWidget(QWidget):
         else:
             stylesheet = stylesheet.replace(tmp_stylesheet, "")
         window.setStyleSheet(stylesheet)
+        for widget in self.widgets:
+            with suppress(RuntimeError):
+                stylesheet = widget.styleSheet()
+                if state:
+                    stylesheet += "\n" + tmp_stylesheet
+                else:
+                    stylesheet = stylesheet.replace(tmp_stylesheet, "")
+                widget.setStyleSheet(stylesheet)
         self.log_message(f"Toggled widget borders (state={state})")
 
     @qthrottled(timeout=500, leading=False)

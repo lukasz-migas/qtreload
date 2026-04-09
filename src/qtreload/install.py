@@ -12,17 +12,31 @@ from qtreload.qt_reload import QtReloadWidget
 _reload_ref = None
 
 
+def _parse_modules(raw_modules: str) -> list[str]:
+    """Parse and deduplicate the configured module list while preserving order."""
+    modules: list[str] = []
+    seen: set[str] = set()
+    for module in raw_modules.split(","):
+        stripped_module = module.strip()
+        if not stripped_module or stripped_module in seen:
+            continue
+        seen.add(stripped_module)
+        modules.append(stripped_module)
+    return modules
+
+
 def install_hot_reload(parent: QWidget | None = None) -> QtReloadWidget | None:
-    """Install hot-reload module - recommended for developers only."""
+    """Install or update the singleton hot-reload widget for development use."""
     global _reload_ref
 
     run_reload = os.environ.get("QTRELOAD_HOT_RELOAD", "0") == "1"
-    if run_reload and _reload_ref is None:
-        modules = os.environ.get("QTRELOAD_HOT_RELOAD_MODULES", "")
-        # split modules separated by comma
-        modules = modules.split(",") if modules else []
-        # remove empty strings
-        modules = [module.strip() for module in modules]
-        # initialize widget
-        _reload_ref = QtReloadWidget(list(set(modules)), parent=parent)
+    if not run_reload:
+        _reload_ref = None
+        return None
+
+    modules = _parse_modules(os.environ.get("QTRELOAD_HOT_RELOAD_MODULES", ""))
+    if _reload_ref is None:
+        _reload_ref = QtReloadWidget(modules, parent=parent)
+    else:
+        _reload_ref.replace_modules(modules)
     return _reload_ref

@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import typing as ty
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 
 IS_WIN = sys.platform == "win32"
@@ -29,16 +30,30 @@ def _get_paths_for_pattern(path: Path, patterns: tuple[str, ...], log_func: ty.C
     return paths
 
 
+def _resolve_spec_root(spec: ModuleSpec) -> Path | None:
+    """Resolve the root directory for a module spec."""
+    if spec.origin is not None:
+        return Path(spec.origin).parent
+
+    search_locations = spec.submodule_search_locations
+    if not search_locations:
+        return None
+
+    search_paths = [Path(location) for location in search_locations]
+    if len(search_paths) != 1:
+        return None
+    return search_paths[0]
+
+
 def get_import_path(module: str) -> Path | None:
     """Get the module path."""
     try:
-        loader = importlib.util.find_spec(module)
+        spec = importlib.util.find_spec(module)
     except ValueError as e:
         raise ValueError(f"Module '{module}' not found.") from e
-    if loader is None:
+    if spec is None:
         return None
-    path = Path(loader.origin)
-    return path.parent
+    return _resolve_spec_root(spec)
 
 
 def get_path_for_module(module: str) -> Path:
@@ -90,13 +105,19 @@ def get_stylesheet_paths(
 
 def path_to_module(path: str, module_path: Path) -> str:
     """Turn a module path into a module name."""
-    modules = path.split(str(module_path.parent))
-    if len(modules) < 2:
-        raise ValueError(f"Path '{path}' is not a subpath of '{module_path}'.")
-    module = modules[1]
-    if "src" in module:
-        module = module.split("src")[1]
-    module = module.replace("\\", ".")[:-3] if IS_WIN else module.replace("/", ".")[:-3]
-    if module.startswith("."):
-        module = module[1:]
-    return module
+    module_root = module_path.parent.resolve()
+    candidate_path = Path(path).resolve()
+
+    try:
+        relative_path = candidate_path.relative_to(module_root)
+    except ValueError as e:
+        raise ValueError(f"Path '{path}' is not a subpath of '{module_path}'.") from e
+
+    module_parts = list(relative_path.parts)
+    if module_parts and module_parts[0] == "src":
+        module_parts = module_parts[1:]
+    if not module_parts:
+        raise ValueError(f"Path '{path}' does not point to a Python module.")
+
+    module_parts[-1] = Path(module_parts[-1]).stem
+    return ".".join(module_parts)

@@ -1,17 +1,8 @@
 import os
 
-try:
-    import qtpy
-
-except Exception:
-    qtpy = None
-
-import pytest
-
 from qtreload.utilities import path_to_module
 
 
-@pytest.mark.skipif(qtpy is None, reason="Qt is required for this test")
 def test_widget(qtbot):
     """Test widget."""
     from qtreload.qt_reload import QtReloadWidget
@@ -27,7 +18,6 @@ def test_widget(qtbot):
         assert module, "Module should not be empty"
 
 
-@pytest.mark.skipif(qtpy is None, reason="Qt is required for this test")
 def test_install_hot_reload(qtbot):
     """Test installing hot reload."""
     from qtreload.install import install_hot_reload
@@ -50,3 +40,11 @@ def test_install_hot_reload(qtbot):
         assert module, "Module should not be empty"
         paths = widget._get_file_paths(module)
         assert len(paths) > 0, "Expected more than 1 path"
+
+    os.environ["QTRELOAD_HOT_RELOAD_MODULES"] = "qtreload,qtreload,does_not_exist"
+    widget = install_hot_reload(None)
+    assert widget is not None
+    assert widget._modules == ["qtreload"]
+
+    os.environ["QTRELOAD_HOT_RELOAD"] = "0"
+    assert install_hot_reload(None) is None
