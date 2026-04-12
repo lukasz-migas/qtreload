@@ -189,6 +189,7 @@ class QtReloadWidget(QWidget):
         layout.addWidget(QLabel("Stylesheet pattern (comma separated)"))
         layout.addWidget(self._stylesheet_pattern_text)
         layout.addLayout(reload_btn_layout)
+        self.side_layout = layout
 
         main_layout = QHBoxLayout(self)
         main_layout.setSpacing(2)
