@@ -96,7 +96,7 @@ jobs:
           uv run coverage xml -o coverage.xml
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           files: coverage.xml
           fail_ci_if_error: true
