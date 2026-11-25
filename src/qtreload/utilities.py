@@ -31,11 +31,16 @@ def _get_paths_for_pattern(path: Path, patterns: tuple[str, ...], log_func: ty.C
 
 
 def _resolve_spec_root(spec: ModuleSpec) -> Path | None:
-    """Resolve the root directory for a module spec."""
-    if spec.origin is not None:
-        return Path(spec.origin).parent
+    """Resolve the root for a module spec.
 
+    Packages resolve to their directory, single-file modules resolve to the file itself and modules without a
+    location on disk (built-in, frozen) resolve to None.
+    """
     search_locations = spec.submodule_search_locations
+    if spec.origin is not None and spec.has_location:
+        origin = Path(spec.origin)
+        return origin.parent if search_locations is not None else origin
+
     if not search_locations:
         return None
 
@@ -46,9 +51,11 @@ def _resolve_spec_root(spec: ModuleSpec) -> Path | None:
 
 
 def get_import_path(module: str) -> Path | None:
-    """Get the module path."""
+    """Get the module path, or None if the module (or one of its parent packages) cannot be found."""
     try:
         spec = importlib.util.find_spec(module)
+    except ModuleNotFoundError:
+        return None
     except ValueError as e:
         raise ValueError(f"Module '{module}' not found.") from e
     if spec is None:
@@ -71,8 +78,10 @@ def get_module_paths(
     stylesheet_pattern: tuple[str, ...] = ("**/*.qss",),
     log_func: ty.Callable = noop,
 ) -> tuple[list[Path], list[Path]]:
-    """Get module paths."""
+    """Get python and stylesheet paths for a package or a single-file module."""
     module_path = get_path_for_module(module)
+    if module_path.is_file():
+        return ([module_path] if module_path.suffix == ".py" else []), []
     module_paths = get_py_module_paths(module_path, py_pattern, ignore_py_pattern, log_func)
     stylesheet_paths = get_stylesheet_paths(module_path, stylesheet_pattern, log_func)
     return module_paths, stylesheet_paths
@@ -103,10 +112,25 @@ def get_stylesheet_paths(
     return stylesheet_paths
 
 
-def path_to_module(path: str, module_path: Path) -> str:
-    """Turn a module path into a module name."""
-    module_root = module_path.parent.resolve()
+def path_to_module(path: str, module_path: Path, module: str | None = None) -> str:
+    """Turn a file path into a module name.
+
+    Parameters
+    ----------
+    path : str
+        Path to the python file.
+    module_path : Path
+        Path returned by `get_import_path` for the watched module.
+    module : str, optional
+        Name of the watched module. When provided, the name is built relative to it, which is required for
+        subpackages (e.g. 'email.mime') and single-file modules. When omitted, the watched module is assumed to be
+        a top-level package.
+    """
     candidate_path = Path(path).resolve()
+    if module is not None:
+        return _path_to_module_relative_to(candidate_path, module_path.resolve(), module)
+
+    module_root = module_path.parent.resolve()
 
     try:
         relative_path = candidate_path.relative_to(module_root)
@@ -121,3 +145,24 @@ def path_to_module(path: str, module_path: Path) -> str:
 
     module_parts[-1] = Path(module_parts[-1]).stem
     return ".".join(module_parts)
+
+
+def _path_to_module_relative_to(path: Path, module_path: Path, module: str) -> str:
+    """Build the module name of `path` relative to the watched `module` located at `module_path`."""
+    if module_path.is_file():
+        if path != module_path:
+            raise ValueError(f"Path '{path}' does not belong to module '{module}'.")
+        return module
+
+    try:
+        relative_path = path.relative_to(module_path)
+    except ValueError as e:
+        raise ValueError(f"Path '{path}' is not a subpath of '{module_path}'.") from e
+
+    module_parts = list(relative_path.parts)
+    if not module_parts:
+        raise ValueError(f"Path '{path}' does not point to a Python module.")
+    module_parts[-1] = Path(module_parts[-1]).stem
+    if module_parts[-1] == "__init__":
+        module_parts.pop()
+    return ".".join([module, *module_parts])

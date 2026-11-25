@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib
+import sys
 import typing as ty
 from contextlib import suppress
 from datetime import datetime
@@ -10,7 +10,7 @@ from logging import getLogger
 from pathlib import Path
 
 from natsort import natsorted
-from qtpy.QtCore import QFileSystemWatcher, QModelIndex, Qt, Signal
+from qtpy.QtCore import QFileSystemWatcher, QModelIndex, Qt, QTimer, Signal
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -27,15 +27,16 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from superqt.utils import qthrottled
 
-from qtreload.pydevd_reload import xreload
+from qtreload.pydevd_reload import Reload
 from qtreload.utilities import get_import_path, get_module_paths, path_to_module
 
 logger = getLogger(__name__)
 
 
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
+# delay before processing file changes, so that bursts of saves are handled together
+RELOAD_DELAY_MS = 500
 
 PY_PATTERN = ("**/*.py",)
 PY_IGNORE_PATTERN = (
@@ -88,9 +89,17 @@ class QtReloadWidget(QWidget):
 
         # setup file watcher
         self._watcher = QFileSystemWatcher()
+        self._watcher_connected = False
+
+        # changed paths are collected and processed together once changes stop for `RELOAD_DELAY_MS`
+        self._pending_paths: set[str] = set()
+        self._reload_timer = QTimer(self)
+        self._reload_timer.setSingleShot(True)
+        self._reload_timer.setInterval(RELOAD_DELAY_MS)
+        self._reload_timer.timeout.connect(self._process_pending_paths)
 
         self._add_module_text = QLineEdit(self)
-        self._add_module_text.editingFinished.connect(self.on_add_module)
+        self._add_module_text.returnPressed.connect(self.on_add_module)
 
         self._add_btn = QPushButton("Add")
         self._add_btn.setToolTip("Add module to watch list. Module name is taken from the text field above.")
@@ -198,20 +207,20 @@ class QtReloadWidget(QWidget):
         main_layout.addWidget(tabs, stretch=True)
 
         # setup modules
-        modules_, paths = [], []
+        modules_: list[str] = []
+        paths: list[Path] = []
         for module in modules:
             if module in modules_:
                 continue
-            path = get_import_path(module)
+            path = self._resolve_module(module)
             if path:
                 modules_.append(module)
                 paths.append(path)
                 self._modules_list.addItem(module)
-                self.log_message(f"Watching for '{module}' changes in '{path}'")
         self._modules = modules_
         self._module_paths = paths
         self.path_to_index_map: dict[str, int] = {}
-        if self._module_paths and auto_connect:
+        if auto_connect:
             self.setup_paths()
 
     def register_widget(self, widget: QWidget) -> None:
@@ -227,14 +236,12 @@ class QtReloadWidget(QWidget):
         for module in modules:
             if module in deduplicated_modules:
                 continue
-            path = get_import_path(module)
+            path = self._resolve_module(module)
             if path is None:
-                self.log_message(f"Could not find path for the module '{module}'")
                 continue
             deduplicated_modules.append(module)
             deduplicated_paths.append(path)
             self._modules_list.addItem(module)
-            self.log_message(f"Watching for '{module}' changes in '{path}'")
 
         self._modules = deduplicated_modules
         self._module_paths = deduplicated_paths
@@ -261,18 +268,16 @@ class QtReloadWidget(QWidget):
 
     def on_add_module(self) -> None:
         """Add new module to the list."""
-        module = self._add_module_text.text()
+        module = self._add_module_text.text().strip()
         if not module:
-            self.log_message(f"The specified module '{module}' does not exist.")
+            self.log_message("Please specify the name of the module to add.")
             return
         if module in self._modules:
             self.log_message(f"The module '{module}' is already in the list.")
             return
-        path = get_import_path(module)
+        path = self._resolve_module(module)
         if not path:
-            self.log_message(f"Could not find path for the module '{module}'")
             return
-        self.log_message(f"Watching for '{module}' changes in '{path}'")
         self._modules.append(module)
         self._module_paths.append(path)
         self._modules_list.addItem(module)
@@ -303,8 +308,21 @@ class QtReloadWidget(QWidget):
         if clear:
             self._remove_filenames()
         self._add_filenames()
-        if connect:
+        if connect and not self._watcher_connected:
             self._watcher.fileChanged.connect(self.on_reload_file)
+            self._watcher_connected = True
+
+    def _resolve_module(self, module: str) -> Path | None:
+        """Return the import path of `module`, logging the outcome."""
+        try:
+            path = get_import_path(module)
+        except ValueError:
+            path = None
+        if path is None:
+            self.log_message(f"Could not find path for the module '{module}'")
+        else:
+            self.log_message(f"Watching for '{module}' changes in '{path}'")
+        return path
 
     def on_filter_changed(self, text: str | None = None) -> None:
         """Filter files in the list."""
@@ -367,6 +385,13 @@ class QtReloadWidget(QWidget):
             raise ValueError("Path not found in module paths")
         return self._module_paths[index]
 
+    def get_module_for_path(self, path: str) -> str:
+        """Map a watched file path to its fully qualified module name."""
+        index = self.path_to_index_map.get(path, None)
+        if index is None:
+            raise ValueError("Path not found in module paths")
+        return path_to_module(path, self._module_paths[index], self._modules[index])
+
     def on_reload_py_files(self) -> None:
         """Reload python files."""
         for path in self._watcher.files():
@@ -400,10 +425,27 @@ class QtReloadWidget(QWidget):
                 widget.setStyleSheet(stylesheet)
         self.log_message(f"Toggled widget borders (state={state})")
 
-    @qthrottled(timeout=500, leading=False)
     def on_reload_file(self, path: str) -> None:
-        """Reload all modules."""
-        self._reload_file(path)
+        """Queue `path` for reloading once file changes settle."""
+        self._pending_paths.add(path)
+        self._reload_timer.start()
+
+    def _process_pending_paths(self) -> None:
+        """Reload all queued paths."""
+        paths = natsorted(self._pending_paths)
+        self._pending_paths.clear()
+        watched = set(self._watcher.files())
+        for path in paths:
+            if path not in self.path_to_index_map:
+                # module was removed from the watch list while the change was pending
+                continue
+            if not Path(path).exists():
+                self.log_message(f"'{path}' no longer exists - skipping")
+                continue
+            # editors that save by replacing the file cause the watcher to drop the path, so add it back
+            if path not in watched:
+                self._watcher.addPath(path)
+            self._reload_file(path)
 
     def _reload_file(self, path: str) -> None:
         if path.endswith(".py"):
@@ -413,12 +455,24 @@ class QtReloadWidget(QWidget):
 
     def _reload_py(self, path: str) -> None:
         try:
-            module = path_to_module(path, self.get_module_path_for_path(path))
-            res = xreload(importlib.import_module(module))
-            self.log_message(f"'{module}' (changed={res})")
-            self.evt_pyfile.emit(module)
-        except Exception as e:
+            module = self.get_module_for_path(path)
+        except ValueError as e:
             self.log_message(f"failed to reload '{path}' Error={e}...")
+            return
+        mod = sys.modules.get(module)
+        if mod is None:
+            self.log_message(f"'{module}' has not been imported yet - skipping")
+            return
+        reloader = Reload(mod)
+        reloader.apply()
+        for warning in reloader.warnings:
+            self.log_message(f"'{module}': {warning}")
+        if reloader.error is not None:
+            error = reloader.error
+            self.log_message(f"failed to reload '{module}' Error={type(error).__name__}: {error}")
+            return
+        self.log_message(f"'{module}' (changed={reloader.found_change})")
+        self.evt_pyfile.emit(module)
 
     def _reload_qss(self, path: str) -> None:
         self.evt_stylesheet.emit()

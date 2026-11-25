@@ -101,7 +101,10 @@ target namespace.
 
 """
 
+import logging
 import types
+
+logger = logging.getLogger(__name__)
 
 NO_DEBUG = 0
 LEVEL1 = 1
@@ -129,18 +132,7 @@ def execfile(file, glob=None, loc=None):
 
 
 def write_err(*args):
-    #     py_db = get_global_debugger()
-    py_db = None
-    if py_db is not None:
-        new_lst = []
-        for a in args:
-            new_lst.append(str(a))
-
-        msg = " ".join(new_lst)
-        s = f"code reload: {msg}\n"
-        cmd = py_db.cmd_factory.make_io_message(s, 2)
-        if py_db.writer is not None:
-            py_db.writer.add_command(cmd)
+    logger.debug("code reload: %s", " ".join(str(a) for a in args))
 
 
 def notify_info0(*args):
@@ -182,13 +174,15 @@ def xreload(mod):
     mod: a module object
 
     Returns a boolean indicating whether a change was done.
+
+    Raises the exception raised while executing the new module code (e.g. SyntaxError), in which case nothing
+    was updated. Use `Reload` directly to also inspect the warnings collected during the update.
     """
     r = Reload(mod)
     r.apply()
-    found_change = r.found_change
-    r = None
-    # pydevd_dont_trace.clear_trace_filter_cache()
-    return found_change
+    if r.error is not None:
+        raise r.error
+    return r.found_change
 
 
 # This isn't actually used... Initially I planned to reload variables which are immutable on the
@@ -222,6 +216,14 @@ class Reload:
             self.mod_filename = mod.__file__ if mod is not None else None
 
         self.found_change = False
+        # problems that did not stop the reload (e.g. attributes that could not be updated)
+        self.warnings = []
+        # exception raised while executing the new module code, if any
+        self.error = None
+
+    def _warn(self, msg):
+        logger.warning("code reload (%s): %s", self.mod_name, msg)
+        self.warnings.append(msg)
 
     def apply(self):
         mod = self.mod
@@ -274,8 +276,8 @@ class Reload:
                 c()
             del self._on_finish_callbacks[:]
         except Exception as e:
-            print(f"Error reloading module: {e}")
-            # pydev_log.exception()
+            self.error = e
+            logger.warning("Error reloading module %s", self.mod_name, exc_info=True)
 
     def _handle_namespace(self, namespace, is_class_namespace=False):
         on_finish = None
@@ -317,7 +319,7 @@ class Reload:
             if type(oldobj) is not type(newobj):
                 # Cop-out: if the type changed, give up
                 if name not in ("__builtins__",):
-                    notify_error(f"Type of: {name} (old: {type(oldobj)} != new: {type(newobj)}) changed... Skipping.")
+                    self._warn(f"Type of: {name} (old: {type(oldobj)} != new: {type(newobj)}) changed... Skipping.")
                 return
 
             if isinstance(newobj, types.FunctionType):
@@ -373,8 +375,7 @@ class Reload:
                     self.found_change = True
 
         except Exception as e:
-            notify_error(f"Exception found when updating {name}. Proceeding for other items.")
-            print(f"Exception found when updating {name}. Proceeding for other items.. Error: {e}")
+            self._warn(f"Exception found when updating {name}. Proceeding for other items. Error: {e}")
 
     # All of the following functions have the same signature as _update()
     def _update_function(self, oldfunc, newfunc):
@@ -442,7 +443,7 @@ class Reload:
         old_bases = getattr(oldclass, "__bases__", None)
         new_bases = getattr(newclass, "__bases__", None)
         if str(old_bases) != str(new_bases):
-            notify_error(f"Changing the hierarchy of a class is not supported. {oldclass} may be inconsistent.")
+            self._warn(f"Changing the hierarchy of a class is not supported. {oldclass} may be inconsistent.")
 
         self._handle_namespace(oldclass, is_class_namespace=True)
 
