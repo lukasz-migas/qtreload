@@ -108,7 +108,7 @@ def test_highlight_overlay(window):
 
 
 def test_inspector_hover_and_exclude(qtbot, window):
-    top, label, button = window
+    _, label, button = window
     inspector = WidgetInspector(exclude=button)
     hovered = []
     inspector.evt_hovered.connect(hovered.append)

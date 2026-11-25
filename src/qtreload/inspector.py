@@ -294,9 +294,9 @@ class WidgetInspector(QObject):
         """Return `widget` unless it is excluded or part of the overlay."""
         if widget is None or not is_alive(widget) or widget is self._overlay:
             return None
-        if self.exclude is not None and is_alive(self.exclude):
-            if widget is self.exclude or self.exclude.isAncestorOf(widget):
-                return None
+        exclude = self.exclude
+        if exclude is not None and is_alive(exclude) and (widget is exclude or exclude.isAncestorOf(widget)):
+            return None
         return widget
 
     def _poll(self) -> None:
