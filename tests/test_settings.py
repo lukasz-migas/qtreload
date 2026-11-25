@@ -106,7 +106,7 @@ def test_paused_changes_are_ignored(qtbot, make_reloader, make_package):
     # a change event for a file modified during the pause can arrive late - it must not reload the file
     reloader.on_reload_file(str(root / "a.py"))
     qtbot.wait(50)
-    assert emitted == []
+    assert emitted == [], (reloader._pause_window, (root / "a.py").stat().st_mtime)
     assert mod.value() == 1
 
     # files modified after resuming are reloaded
