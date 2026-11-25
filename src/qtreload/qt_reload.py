@@ -83,6 +83,9 @@ class QtReloadWidget(QWidget):
         ignore_py_pattern: tuple[str, ...] = PY_IGNORE_PATTERN,
         stylesheet_pattern: tuple[str, ...] = STYLESHEET_PATTERN,
         log_func: ty.Callable[[str], None] | None = None,
+        *,
+        delay_ms: int = RELOAD_DELAY_MS,
+        settings_key: str | None = None,
     ) -> None:
         super().__init__(parent=parent)
         self.widgets: list[QWidget] = []
@@ -140,6 +143,17 @@ class QtReloadWidget(QWidget):
         self._enable_widget_borders.setToolTip("Show borders around each widget in the app.")
         self._enable_widget_borders.stateChanged.connect(self.on_toggle_widget_borders)
 
+        self._pause_checkbox = QCheckBox("Pause reloading")
+        self._pause_checkbox.setToolTip(
+            "Ignore file changes, e.g. while switching git branches. "
+            "Use 'Reload python files' afterwards to apply them."
+        )
+        self._pause_checkbox.toggled.connect(self.on_toggle_paused)
+
+        self._reset_btn = QPushButton("Reset")
+        self._reset_btn.setToolTip("Forget the remembered modules and patterns and go back to the configured ones.")
+        self._reset_btn.clicked.connect(self.on_reset_settings)
+
         self._log_edit = QTextEdit(self)
         self._log_edit.setReadOnly(True)
         self._log_edit.document().setMaximumBlockCount(MAX_MESSAGES)
@@ -171,6 +185,7 @@ class QtReloadWidget(QWidget):
         add_btn_layout.addWidget(self._add_btn)
         add_btn_layout.addWidget(self._remove_btn)
         add_btn_layout.addWidget(self._refresh_btn)
+        add_btn_layout.addWidget(self._reset_btn)
 
         reload_btn_layout = QHBoxLayout()
         reload_btn_layout.setSpacing(2)
@@ -184,6 +199,7 @@ class QtReloadWidget(QWidget):
         layout.addLayout(add_btn_layout)
         layout.addWidget(self._modules_list)
         layout.addWidget(self._enable_widget_borders)
+        layout.addWidget(self._pause_checkbox)
 
         layout.addWidget(QLabel("Python pattern (comma separated)"))
         layout.addWidget(self._py_pattern_text)
@@ -212,11 +228,16 @@ class QtReloadWidget(QWidget):
             ignore_py_pattern=ignore_py_pattern,
             stylesheet_pattern=stylesheet_pattern,
             log_func=log_func,
+            delay_ms=delay_ms,
+            settings_key=settings_key,
         )
         self.reloader.evt_pyfile.connect(self.evt_pyfile)
         self.reloader.evt_stylesheet.connect(self.evt_stylesheet)
         self.reloader.evt_stylesheet_changed.connect(self.evt_stylesheet_changed)
         self.reloader.evt_reloaded.connect(self._on_reload_result)
+        self.reloader.evt_paused_changed.connect(self._on_paused_changed)
+        self._on_paused_changed(self.reloader.paused)
+        self._reset_btn.setVisible(self.reloader.settings_key is not None)
         self.reloader.evt_reload_failed.connect(self._on_reload_result)
         # show what was logged while the reloader was set up, then follow new messages
         for msg, level in self.reloader.messages:
@@ -356,6 +377,20 @@ class QtReloadWidget(QWidget):
             self.log_message("No modules selected.")
             return
         self.reloader.remove_modules([item.text() for item in items])
+
+    def on_toggle_paused(self, paused: bool) -> None:
+        """Pause or resume reloading."""
+        self.reloader.set_paused(paused)
+
+    def on_reset_settings(self) -> None:
+        """Forget remembered edits."""
+        self.reloader.reset_settings()
+
+    def _on_paused_changed(self, paused: bool) -> None:
+        """Show the paused state."""
+        self._pause_checkbox.blockSignals(True)
+        self._pause_checkbox.setChecked(paused)
+        self._pause_checkbox.blockSignals(False)
 
     def on_refresh_filelist(self) -> None:
         """Rediscover files of all modules."""

@@ -34,7 +34,8 @@ classifiers = [
 dynamic = ["version"]
 dependencies = [
     "qtpy",
-    "natsort"
+    "natsort",
+    "tomli>=1.1; python_version < '3.11'",
 ]
 
 # extras

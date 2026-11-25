@@ -49,3 +49,17 @@ def make_reloader(qtbot):
     yield _make
     for reloader in created:
         reloader.deleteLater()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolated_settings(tmp_path_factory):
+    """Store QSettings in a temporary directory, so tests never touch the user's settings."""
+    from qtpy.QtCore import QSettings
+
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path_factory.mktemp("settings")))
+
+
+@pytest.fixture
+def settings_key():
+    """Unique settings key, so tests do not share remembered state."""
+    return f"test_{uuid.uuid4().hex[:8]}"

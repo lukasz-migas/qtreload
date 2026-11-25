@@ -2,6 +2,7 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
+from qtreload.config import ReloadConfig, load_config
 from qtreload.install import install_hot_reload
 from qtreload.live import LiveWidget, replace_widget
 from qtreload.qt_reload import QtDevPopup, QtReloadWidget
@@ -20,8 +21,10 @@ __all__ = [
     "LiveWidget",
     "QtDevPopup",
     "QtReloadWidget",
+    "ReloadConfig",
     "ReloadResult",
     "install_hot_reload",
+    "load_config",
     "render_stylesheet",
     "replace_widget",
 ]

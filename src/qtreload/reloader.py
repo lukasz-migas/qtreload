@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import heapq
+import json
 import logging
 import sys
+import time
 import traceback
 import typing as ty
 import weakref
@@ -15,13 +17,14 @@ from datetime import datetime
 from pathlib import Path
 
 from natsort import natsorted
-from qtpy.QtCore import QCoreApplication, QFileSystemWatcher, QObject, QTimer, Signal
+from qtpy.QtCore import QCoreApplication, QFileSystemWatcher, QObject, QSettings, QTimer, Signal
 
 from qtreload.pydevd_reload import Reload
 
 if ty.TYPE_CHECKING:
     from qtpy.QtWidgets import QWidget
 
+    from qtreload.config import ReloadConfig
     from qtreload.live import LiveWidget
 from qtreload.utilities import (
     get_import_path,
@@ -48,6 +51,16 @@ STYLESHEET_PATTERN = ("**/*.qss",)
 IGNORE_DIRECTORIES = ("__pycache__",)
 # number of recent log messages kept in `HotReloader.messages`
 MAX_MESSAGES = 1000
+# organization name of the QSettings used to remember edits (see `HotReloader(settings_key=...)`)
+SETTINGS_ORGANIZATION = "qtreload"
+# remembered values and whether each is a list of strings (otherwise a bool)
+SETTINGS_FIELDS = {
+    "modules": True,
+    "py_pattern": True,
+    "ignore_py_pattern": True,
+    "stylesheet_pattern": True,
+    "paused": False,
+}
 
 
 # values of stylesheet template variables, or a function returning them (e.g. the colors of the current theme)
@@ -143,6 +156,9 @@ class HotReloader(QObject):
         Called with every (timestamped) log message. See also `evt_message` and `messages`.
     delay_ms : int
         Changes are reloaded once no new change was seen for this many milliseconds.
+    settings_key : str, optional
+        If given, changes made to the modules, patterns and paused state (e.g. in `QtReloadWidget`) are remembered
+        under this key and used instead of the values passed here the next time. `reset_settings` forgets them.
     """
 
     # emitted with the module name after it was reloaded successfully
@@ -161,6 +177,8 @@ class HotReloader(QObject):
     evt_stylesheet_changed = Signal(str)
     # emitted after the watched modules, patterns or files were updated
     evt_watchlist_changed = Signal()
+    # emitted with the new state when reloading is paused or resumed
+    evt_paused_changed = Signal(bool)
 
     def __init__(
         self,
@@ -172,12 +190,36 @@ class HotReloader(QObject):
         stylesheet_pattern: tuple[str, ...] = STYLESHEET_PATTERN,
         log_func: ty.Callable[[str], None] | None = None,
         delay_ms: int = RELOAD_DELAY_MS,
+        settings_key: str | None = None,
     ) -> None:
         super().__init__(parent)
         self.log_func = log_func
         self._messages: deque[tuple[str, int]] = deque(maxlen=MAX_MESSAGES)
         self._stylesheets: list[_StylesheetRegistration] = []
         self._live_widgets: list[LiveWidget] = []
+
+        # values passed in, restored by `reset_settings`, and values remembered from earlier edits, which win
+        modules = tuple(modules)
+        self._configured = {
+            "modules": modules,
+            "py_pattern": tuple(py_pattern),
+            "ignore_py_pattern": tuple(ignore_py_pattern),
+            "stylesheet_pattern": tuple(stylesheet_pattern),
+        }
+        self._settings_key = settings_key
+        self._saving_enabled = True
+        saved = self._load_settings()
+        modules = saved.get("modules", modules)
+        py_pattern = saved.get("py_pattern", py_pattern)
+        ignore_py_pattern = saved.get("ignore_py_pattern", ignore_py_pattern)
+        stylesheet_pattern = saved.get("stylesheet_pattern", stylesheet_pattern)
+        self._paused: bool = saved.get("paused", False)
+        self._ignored_paths: set[str] = set()
+        # start of the current pause and (start, end) of the last one - files modified during a pause are not
+        # reloaded, even if their change events arrive after resuming (file system events can be delayed)
+        self._paused_at = time.time()
+        self._pause_window: tuple[float, float] | None = None
+
         self.py_pattern = py_pattern
         self.ignore_py_pattern = ignore_py_pattern
         self.stylesheet_pattern = stylesheet_pattern
@@ -205,6 +247,19 @@ class HotReloader(QObject):
                 self._module_paths.append(path)
         if auto_connect:
             self.setup_paths()
+        if self._paused:
+            self.log_message("Reloading is paused (remembered from the last session)", logging.WARNING)
+
+    @classmethod
+    def from_config(cls, config: ReloadConfig | None = None, **kwargs: ty.Any) -> HotReloader:
+        """Create a reloader from `config`, loaded with `qtreload.config.load_config` if not given.
+
+        Other keyword arguments (e.g. `parent`, `settings_key`) are passed to the constructor and win over `config`.
+        """
+        from qtreload.config import load_config
+
+        config = config or load_config()
+        return cls(config.modules, **{**config.reloader_kwargs(), **kwargs})
 
     @property
     def modules(self) -> tuple[str, ...]:
@@ -386,6 +441,7 @@ class HotReloader(QObject):
             return False
         self._modules.append(module)
         self._module_paths.append(path)
+        self._save_settings(modules=self._modules)
         self.refresh()
         return True
 
@@ -395,6 +451,7 @@ class HotReloader(QObject):
         kept = [(m, p) for m, p in zip(self._modules, self._module_paths, strict=True) if m not in to_remove]
         self._modules = [m for m, _ in kept]
         self._module_paths = [p for _, p in kept]
+        self._save_settings(modules=self._modules)
         self.refresh()
 
     def replace_modules(self, modules: ty.Iterable[str]) -> None:
@@ -409,6 +466,7 @@ class HotReloader(QObject):
                 continue
             self._modules.append(module)
             self._module_paths.append(path)
+        self._save_settings(modules=self._modules)
         self.refresh()
 
     def set_patterns(
@@ -424,7 +482,134 @@ class HotReloader(QObject):
             self.ignore_py_pattern = ignore_py_pattern
         if stylesheet_pattern is not None:
             self.stylesheet_pattern = stylesheet_pattern
+        self._save_settings(
+            py_pattern=py_pattern, ignore_py_pattern=ignore_py_pattern, stylesheet_pattern=stylesheet_pattern
+        )
         self.refresh()
+
+    # Pause
+
+    @property
+    def paused(self) -> bool:
+        """Whether file changes are ignored. Explicit reloads (e.g. `reload_path`) still work."""
+        return self._paused
+
+    def set_paused(self, paused: bool) -> None:
+        """Pause or resume reloading, e.g. while switching git branches.
+
+        While paused, changed files are not reloaded. On resume, new and deleted files are picked up and the number
+        of ignored changes is logged - use `reload_all_py` to apply them.
+        """
+        if paused == self._paused:
+            return
+        self._paused = paused
+        self._save_settings(paused=paused)
+        if paused:
+            self._paused_at = time.time()
+            self._reload_timer.stop()
+            self._ignored_paths |= self._pending_paths
+            self._pending_paths.clear()
+            self.log_message("Reloading paused")
+        else:
+            self._pause_window = (self._paused_at, time.time())
+            self._resync_watcher()
+            ignored = len(self._ignored_paths)
+            self._ignored_paths.clear()
+            suffix = (
+                f" - {ignored} changed files were not reloaded, use 'Reload python files' to apply them"
+                if ignored
+                else ""
+            )
+            self.log_message(f"Reloading resumed{suffix}", logging.WARNING if ignored else logging.INFO)
+        self.evt_paused_changed.emit(paused)
+
+    def _modified_while_paused(self, path: str) -> bool:
+        """Return True if `path` was last modified during the last pause."""
+        if self._pause_window is None:
+            return False
+        try:
+            modified = Path(path).stat().st_mtime
+        except OSError:
+            return False
+        return self._pause_window[0] <= modified < self._pause_window[1]
+
+    def _resync_watcher(self) -> None:
+        """Rediscover all modules and re-watch registered stylesheets, e.g. after changes were ignored."""
+        self._pending_directories.clear()
+        changed = False
+        for index in range(len(self._modules)):
+            changed |= self._discover_module(index)
+        watched = set(self._watcher.files())
+        missing = [path for path in self.stylesheets if path not in watched and Path(path).exists()]
+        if missing:
+            self._watcher.addPaths(missing)
+        if changed:
+            self.evt_watchlist_changed.emit()
+
+    # Settings
+
+    @property
+    def settings_key(self) -> str | None:
+        """Key under which edits are remembered, None if they are not."""
+        return self._settings_key
+
+    def reset_settings(self) -> None:
+        """Forget remembered edits and go back to the modules and patterns passed to the constructor."""
+        if self._settings_key is not None:
+            self._settings().clear()
+        self._saving_enabled = False
+        try:
+            self.py_pattern = self._configured["py_pattern"]
+            self.ignore_py_pattern = self._configured["ignore_py_pattern"]
+            self.stylesheet_pattern = self._configured["stylesheet_pattern"]
+            self.replace_modules(self._configured["modules"])
+            self.set_paused(False)
+        finally:
+            self._saving_enabled = True
+        self.log_message("Restored the configured modules and patterns")
+
+    def _settings(self) -> QSettings:
+        return QSettings(
+            QSettings.Format.IniFormat, QSettings.Scope.UserScope, SETTINGS_ORGANIZATION, self._settings_key
+        )
+
+    def _load_settings(self) -> dict[str, ty.Any]:
+        """Return the remembered values, skipping invalid ones."""
+        if self._settings_key is None:
+            return {}
+        settings = self._settings()
+        values: dict[str, ty.Any] = {}
+        for name, is_list in SETTINGS_FIELDS.items():
+            raw = settings.value(name)
+            if raw is None:
+                continue
+            try:
+                value = json.loads(str(raw))
+            except ValueError:
+                value = None
+            valid = (
+                isinstance(value, list) and all(isinstance(item, str) for item in value)
+                if is_list
+                else isinstance(value, bool)
+            )
+            if not valid:
+                self.log_message(f"Ignoring invalid remembered value of '{name}': {raw!r}", logging.WARNING)
+                continue
+            values[name] = tuple(value) if is_list else value
+        if values:
+            self.log_message(f"Using remembered {', '.join(values)} (settings key '{self._settings_key}')")
+        return values
+
+    def _save_settings(self, **values: ty.Any) -> None:
+        """Remember the given values (None values are skipped)."""
+        if self._settings_key is None or not self._saving_enabled:
+            return
+        settings = self._settings()
+        for name, value in values.items():
+            if value is None:
+                continue
+            settings.setValue(name, json.dumps(list(value) if SETTINGS_FIELDS[name] else bool(value)))
+        settings.sync()
 
     def refresh(self) -> None:
         """Rediscover files of all watched modules."""
@@ -542,7 +727,8 @@ class HotReloader(QObject):
     def on_directory_changed(self, path: str) -> None:
         """Queue the module owning directory `path` for rediscovery once file changes settle."""
         self._pending_directories.add(path)
-        self._reload_timer.start()
+        if not self._paused:
+            self._reload_timer.start()
 
     def _discover_pending_directories(self) -> None:
         """Rediscover the files of modules whose directories changed."""
@@ -599,7 +785,10 @@ class HotReloader(QObject):
     # Reloading
 
     def on_reload_file(self, path: str) -> None:
-        """Queue `path` for reloading once file changes settle."""
+        """Queue `path` for reloading once file changes settle (ignored while paused)."""
+        if self._paused:
+            self._ignored_paths.add(path)
+            return
         self._pending_paths.add(path)
         self._reload_timer.start()
 
@@ -617,6 +806,9 @@ class HotReloader(QObject):
                 continue
             if not Path(path).exists():
                 self.log_message(f"'{path}' no longer exists - skipping")
+                continue
+            if self._modified_while_paused(path):
+                logger.debug("Skipping %s - it was modified while reloading was paused", path)
                 continue
             # editors that save by replacing the file cause the watcher to drop the path, so add it back
             if path not in watched:

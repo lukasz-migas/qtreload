@@ -62,7 +62,8 @@ app.layout().addWidget(widget)
 
 That's pretty much it. Now every time you make changes to your source code in e.g. `napari` will be reflected in your interpreter.
 
-Using `install_hot_reload` requires two environment variables being set, namely:
+`install_hot_reload` does nothing unless the environment variable `QTRELOAD_HOT_RELOAD=1` is set, so it can stay in
+your application code. The modules and patterns come from the configuration (see below):
 
 ```
 QTRELOAD_HOT_RELOAD=1
@@ -78,6 +79,33 @@ widget = install_hot_reload()
 # add the widget to your application (or keep reference to it so it's not garbage collected)
 app.layout().addWidget(widget)
 ```
+
+### Configuration
+
+Instead of passing modules and patterns in code, you can configure them in `pyproject.toml`:
+
+```toml
+[tool.qtreload]
+modules = ["napari", "napari_plugin"]
+py_pattern = ["**/*.py"]
+ignore_py_pattern = ["**/__init__.py", "**/test_*.py"]
+stylesheet_pattern = ["**/*.qss"]
+delay_ms = 500
+```
+
+or with environment variables, which win over `pyproject.toml` (lists are comma separated, an empty value means an
+empty list): `QTRELOAD_HOT_RELOAD_MODULES`, `QTRELOAD_PY_PATTERN`, `QTRELOAD_IGNORE_PY_PATTERN`,
+`QTRELOAD_STYLESHEET_PATTERN` and `QTRELOAD_DELAY_MS`. The nearest `pyproject.toml` with a `[tool.qtreload]` table is used,
+searching up from the current directory. `install_hot_reload` uses this configuration, and so do `HotReloader.from_config()`
+and `qtreload.load_config()`.
+
+To remember changes made in the widget (modules, patterns and the paused state) between sessions, pass a settings key,
+e.g. `install_hot_reload(settings_key="myapp")` or `QtReloadWidget(modules, settings_key="myapp")`. Remembered values are
+used instead of the configured ones until you press "Reset".
+
+Tick "Pause reloading" (or call `reloader.set_paused(True)`) while you switch git branches or run code generators. Files
+changed while paused are not reloaded, even if their change events arrive late - press "Reload python files" afterwards if
+you want to apply them.
 
 ### Without a widget
 
