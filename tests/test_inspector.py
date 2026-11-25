@@ -88,7 +88,7 @@ def test_open_in_editor_errors_and_default(tmp_path, monkeypatch):
     opened = []
     monkeypatch.setattr(inspector_module.QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
     assert open_in_editor(tmp_path / "a.py", 3)
-    assert opened[0].toLocalFile() == str(tmp_path / "a.py")
+    assert Path(opened[0].toLocalFile()) == tmp_path / "a.py"
 
 
 def test_highlight_overlay(window):
