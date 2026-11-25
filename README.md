@@ -114,9 +114,10 @@ Keep a reference to it (or give it a parent) so it is not garbage collected.
 
 While this approach can be extremely useful and can save a lot of time, it has a couple of limitations:
 
-- code within the `___init__.py` cannot be reloaded (most of the time)
+- `__init__.py` files are not watched by default - remove `**/__init__.py` from the ignore pattern to reload them too
 - some changes to GUI code cannot be hot-reloaded - if e.g., you are modifying the `QMainWindow` and just added a new button, this button will not be shown. In order to show it, you will still need to restart the application. If, however, you were modifying a plugin or a dialog that is shown upon clicking on e.g. menu item, these changes WILL take place.
-- modifying python properties (@setter/@getter) is not always reloaded (they will be reflected if you are adding a new property but not if you are changing existing property)
+- module and class level constants are not changed on reload (so application state is kept) - functions, methods, properties, decorated functions and dataclass fields are updated
+- adding, removing or changing enum members and changing closure variables of module-level functions require a restart (a warning is shown in the log)
 - new files are watched as soon as they are created, but they are only reloaded once your application has imported them
 
 ## Acknowledgements

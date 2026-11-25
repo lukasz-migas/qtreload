@@ -166,7 +166,6 @@ exclude_lines = [
 source = ["src"]
 relative_files = true
 omit = [
-    "*/pydevd_reload.py",
     "tests/**",
     "*/__init__.py",
     "raise NotImplementedError",
