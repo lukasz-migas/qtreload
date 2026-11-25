@@ -1,0 +1,254 @@
+import importlib
+import sys
+
+import pytest
+
+from qtreload.reloader import HotReloader
+
+
+@pytest.fixture
+def make_reloader(qtbot):
+    """Create a HotReloader with a short reload delay."""
+    created = []
+
+    def _make(modules=(), messages=None, **kwargs):
+        reloader = HotReloader(
+            modules, log_func=messages.append if messages is not None else None, delay_ms=10, **kwargs
+        )
+        created.append(reloader)
+        return reloader
+
+    yield _make
+    for reloader in created:
+        reloader.deleteLater()
+
+
+def test_reloader_discovers_files(make_reloader, make_package):
+    name, root = make_package({"a.py": "", "sub/__init__.py": "", "sub/b.py": "", "style.qss": ""})
+    reloader = make_reloader([name, name, "not_a_module_qtreload"])
+
+    assert reloader.modules == (name,)
+    assert reloader.files == [str(root / "a.py"), str(root / "style.qss"), str(root / "sub" / "b.py")]
+    assert sorted(reloader._watcher.files()) == sorted(reloader.files)
+    assert reloader.get_module_for_path(str(root / "sub" / "b.py")) == f"{name}.sub.b"
+    assert reloader.get_module_path_for_path(str(root / "a.py")) == root
+    with pytest.raises(ValueError):
+        reloader.get_module_for_path("/not/watched.py")
+
+
+def test_reloader_without_auto_connect(make_reloader, make_package):
+    name, _ = make_package({"a.py": ""})
+    reloader = make_reloader([name], auto_connect=False)
+    assert reloader.files == []
+    assert not reloader._watcher_connected
+
+    reloader.setup_paths()
+    assert reloader.files
+    assert reloader._watcher_connected
+
+
+def test_reloader_manage_modules(qtbot, make_reloader, make_package):
+    name_a, _ = make_package({"a.py": ""})
+    name_b, _ = make_package({"b.py": ""})
+    messages = []
+    reloader = make_reloader([], messages)
+    assert reloader._watcher_connected, "Watcher should be connected even without modules"
+
+    with qtbot.waitSignal(reloader.evt_watchlist_changed):
+        assert reloader.add_module(name_a) is True
+    assert reloader.add_module(name_a) is False
+    assert reloader.add_module("not_a_module_qtreload.sub") is False
+    assert any("Could not find path" in msg for msg in messages)
+    assert reloader.add_module(name_b) is True
+    assert reloader.modules == (name_a, name_b)
+
+    reloader.remove_modules([name_a, "unknown"])
+    assert reloader.modules == (name_b,)
+    assert all(name_b in path for path in reloader.files)
+    assert all(name_b in path for path in reloader._watcher.files())
+
+    reloader.replace_modules([name_a, name_a])
+    assert reloader.modules == (name_a,)
+
+
+def test_reloader_set_patterns(make_reloader, make_package):
+    name, root = make_package({"a.py": "", "test_a.py": "", "style.qss": ""})
+    reloader = make_reloader([name])
+    assert str(root / "test_a.py") not in reloader.files
+
+    reloader.set_patterns(ignore_py_pattern=())
+    assert str(root / "test_a.py") in reloader.files
+    reloader.set_patterns(stylesheet_pattern=())
+    assert str(root / "style.qss") not in reloader.files
+    assert reloader.ignore_py_pattern == ()
+
+
+def test_reload_batches_multiple_files(qtbot, make_reloader, make_package):
+    """Test saving several files at once reloads all of them."""
+    name, root = make_package({"a.py": "def value():\n    return 1\n", "b.py": "def value():\n    return 1\n"})
+    mod_a = importlib.import_module(f"{name}.a")
+    mod_b = importlib.import_module(f"{name}.b")
+    reloader = make_reloader([name])
+
+    emitted = []
+    reloader.evt_pyfile.connect(emitted.append)
+    for filename in ("a.py", "b.py"):
+        (root / filename).write_text("def value():\n    return 2\n")
+        reloader.on_reload_file(str(root / filename))
+        reloader.on_reload_file(str(root / filename))
+
+    qtbot.waitUntil(lambda: len(emitted) == 2, timeout=2000)
+    assert emitted == [f"{name}.a", f"{name}.b"]
+    assert mod_a.value() == 2
+    assert mod_b.value() == 2
+
+
+def test_reload_readds_replaced_file(qtbot, make_reloader, make_package):
+    """Test files dropped by the watcher (atomic save) are watched again after reload."""
+    name, root = make_package({"a.py": "def value():\n    return 1\n"})
+    importlib.import_module(f"{name}.a")
+    reloader = make_reloader([name])
+    path = str(root / "a.py")
+
+    reloader._watcher.removePath(path)
+    with qtbot.waitSignal(reloader.evt_pyfile, timeout=2000):
+        reloader.on_reload_file(path)
+    assert path in reloader._watcher.files()
+
+
+def test_reload_skips_removed_module(qtbot, make_reloader, make_package):
+    """Test changes queued for a module that was removed meanwhile are dropped."""
+    name, root = make_package({"a.py": "def value():\n    return 1\n"})
+    importlib.import_module(f"{name}.a")
+    reloader = make_reloader([name])
+    emitted = []
+    reloader.evt_pyfile.connect(emitted.append)
+
+    reloader.on_reload_file(str(root / "a.py"))
+    reloader.remove_modules([name])
+    qtbot.wait(50)
+    assert emitted == []
+    assert reloader._watcher.files() == []
+
+
+def test_reload_skips_unimported_module(qtbot, make_reloader, make_package):
+    name, root = make_package({"a.py": "def value():\n    return 1\n"})
+    messages = []
+    reloader = make_reloader([name], messages)
+
+    reloader.on_reload_file(str(root / "a.py"))
+    qtbot.waitUntil(lambda: any("has not been imported" in msg for msg in messages), timeout=2000)
+    assert f"{name}.a" not in sys.modules
+
+
+def test_reload_reports_syntax_error(qtbot, make_reloader, make_package):
+    name, root = make_package({"a.py": "def value():\n    return 1\n"})
+    mod = importlib.import_module(f"{name}.a")
+    messages = []
+    reloader = make_reloader([name], messages)
+    emitted = []
+    reloader.evt_pyfile.connect(emitted.append)
+
+    (root / "a.py").write_text("def value(:\n")
+    reloader.on_reload_file(str(root / "a.py"))
+    qtbot.waitUntil(lambda: any("SyntaxError" in msg for msg in messages), timeout=2000)
+    assert emitted == []
+    assert mod.value() == 1
+
+
+def test_reload_path_and_reload_all(qtbot, make_reloader, make_package):
+    name, root = make_package({"a.py": "def value():\n    return 1\n", "style.qss": ""})
+    mod = importlib.import_module(f"{name}.a")
+    reloader = make_reloader([name])
+
+    with qtbot.waitSignal(reloader.evt_stylesheet):
+        reloader.reload_path(str(root / "style.qss"))
+    with qtbot.waitSignal(reloader.evt_stylesheet):
+        reloader.reload_stylesheets()
+
+    (root / "a.py").write_text("def value():\n    return 3\n")
+    with qtbot.waitSignal(reloader.evt_pyfile) as blocker:
+        reloader.reload_all_py()
+    assert blocker.args == [f"{name}.a"]
+    assert mod.value() == 3
+
+
+def test_reloader_watches_package_directories(make_reloader, make_package):
+    name, root = make_package(
+        {"a.py": "", "sub/__init__.py": "", "sub/b.py": "", "__pycache__/x.pyc": "", ".hidden/c.py": ""}
+    )
+    reloader = make_reloader([name])
+
+    assert sorted(reloader._directory_to_index_map) == sorted([str(root), str(root / "sub")])
+    assert str(root / "__pycache__") not in reloader._directory_to_index_map
+
+    reloader.remove_modules([name])
+    assert reloader._directory_to_index_map == {}
+
+
+def test_reloader_does_not_watch_single_file_module_directory(make_reloader):
+    reloader = make_reloader(["textwrap"])
+    assert reloader.files
+    assert reloader._directory_to_index_map == {}
+
+
+def test_discover_new_and_deleted_files(qtbot, make_reloader, make_package):
+    name, root = make_package({"a.py": "", "b.py": ""})
+    reloader = make_reloader([name])
+
+    (root / "new.py").write_text("")
+    (root / "style.qss").write_text("")
+    (root / "b.py").unlink()
+    (root / "pkg").mkdir()
+    (root / "pkg" / "c.py").write_text("")
+    with qtbot.waitSignal(reloader.evt_watchlist_changed, timeout=2000):
+        reloader.on_directory_changed(str(root))
+
+    expected = [str(root / "a.py"), str(root / "new.py"), str(root / "style.qss"), str(root / "pkg" / "c.py")]
+    assert sorted(reloader.files) == sorted(expected)
+    assert str(root / "pkg") in reloader._directory_to_index_map
+    assert reloader.get_module_for_path(str(root / "pkg" / "c.py")) == f"{name}.pkg.c"
+
+
+def test_discover_without_changes_does_not_emit(qtbot, make_reloader, make_package):
+    name, root = make_package({"a.py": ""})
+    reloader = make_reloader([name])
+    emitted = []
+    reloader.evt_watchlist_changed.connect(lambda: emitted.append(True))
+
+    reloader.on_directory_changed(str(root))
+    reloader.on_directory_changed("/not/watched")
+    qtbot.wait(50)
+    assert emitted == []
+
+
+def test_discover_removed_directory(qtbot, make_reloader, make_package):
+    name, root = make_package({"a.py": "", "sub/b.py": ""})
+    reloader = make_reloader([name])
+    assert str(root / "sub" / "b.py") in reloader.files
+
+    (root / "sub" / "b.py").unlink()
+    (root / "sub").rmdir()
+    with qtbot.waitSignal(reloader.evt_watchlist_changed, timeout=2000):
+        reloader.on_directory_changed(str(root / "sub"))
+    assert reloader.files == [str(root / "a.py")]
+    assert str(root / "sub") not in reloader._directory_to_index_map
+
+
+def test_file_system_events_end_to_end(qtbot, make_reloader, make_package):
+    """Test real watcher events: repeated replace-style saves reload every time and new files are discovered."""
+    import os
+
+    name, root = make_package({"a.py": "def value():\n    return 0\n"})
+    mod = importlib.import_module(f"{name}.a")
+    reloader = make_reloader([name])
+    path = root / "a.py"
+
+    for value in (1, 2, 3):
+        tmp = root / f".a.py.{value}.tmp"
+        tmp.write_text(f"def value():\n    return {value}\n")
+        os.replace(tmp, path)
+        qtbot.waitUntil(lambda value=value: mod.value() == value, timeout=5000)
+
+    (root / "new.py").write_text("")
+    qtbot.waitUntil(lambda: str(root / "new.py") in reloader.files, timeout=5000)

@@ -24,8 +24,9 @@ the hot-reload functionality, especially when developing Qt applications in Pyth
 
 Anyway, `qtreload` is a small library that provides a similar hot-reload functionality when developing Qt code in Python.
 
-It operates by first generating a list of all possible module/submodule files and then watching for any changes using the   `QFileWatcher`. Once a change is detected, the module
-is reloaded and the changes are reflected in the application.
+It operates by first generating a list of all possible module/submodule files and then watching for any changes using the `QFileSystemWatcher`. Once a change is detected, the module
+is reloaded and the changes are reflected in the application. Package directories are watched too, so files that you add or delete later are picked up automatically,
+and editors that save by replacing the file (e.g. PyCharm's "safe write" or vim) keep working after the first save.
 
 This library should be used when developing Qt code in Python and you are not interested in continually having to restart your application. Please see the limitations section to find out when it's still required.
 
@@ -78,6 +79,26 @@ widget = install_hot_reload()
 app.layout().addWidget(widget)
 ```
 
+### Without a widget
+
+All watching and reloading is done by `HotReloader`, a `QObject` with no user interface. `QtReloadWidget` is a view on top
+of it (available as `widget.reloader`). Use `HotReloader` directly if you don't want to show anything:
+
+```python
+from qtreload import HotReloader
+
+reloader = HotReloader(["napari", "napari_plugin"], parent=app)
+reloader.evt_pyfile.connect(lambda module: print(f"reloaded {module}"))
+reloader.evt_stylesheet.connect(apply_my_stylesheet)
+
+# change what is watched at any time
+reloader.add_module("another_module")
+reloader.remove_modules(["napari_plugin"])
+reloader.set_patterns(stylesheet_pattern=("**/*.qss", "**/*.css"))
+```
+
+Keep a reference to it (or give it a parent) so it is not garbage collected.
+
 ## When it works like magic
 
  There are countless examples where this approach really well. Some examples:
@@ -93,7 +114,7 @@ While this approach can be extremely useful and can save a lot of time, it has a
 - code within the `___init__.py` cannot be reloaded (most of the time)
 - some changes to GUI code cannot be hot-reloaded - if e.g., you are modifying the `QMainWindow` and just added a new button, this button will not be shown. In order to show it, you will still need to restart the application. If, however, you were modifying a plugin or a dialog that is shown upon clicking on e.g. menu item, these changes WILL take place.
 - modifying python properties (@setter/@getter) is not always reloaded (they will be reflected if you are adding a new property but not if you are changing existing property)
-- new files are not reloaded since they were not initially added to the `watched` list - you can refresh file list
+- new files are watched as soon as they are created, but they are only reloaded once your application has imported them
 
 ## Acknowledgements
 

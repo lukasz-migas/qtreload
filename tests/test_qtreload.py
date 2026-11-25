@@ -32,19 +32,19 @@ def test_install_hot_reload(qtbot):
     qtbot.addWidget(widget)
     assert widget is not None
     assert len(widget.path_to_index_map) > 0, "Expected more than 1 path"
-    assert len(widget._module_paths) == 1, "Expected 2 modules"
+    assert widget.reloader.modules == ("qtreload",)
 
     # make sure we can retrieve each module properly
     for path in widget.path_to_index_map.keys():
         module = path_to_module(path, widget.get_module_path_for_path(path))
         assert module, "Module should not be empty"
-        paths = widget._get_file_paths(module)
+        paths = widget.reloader._get_file_paths(module)
         assert len(paths) > 0, "Expected more than 1 path"
 
     os.environ["QTRELOAD_HOT_RELOAD_MODULES"] = "qtreload,qtreload,does_not_exist"
     widget = install_hot_reload(None)
     assert widget is not None
-    assert widget._modules == ["qtreload"]
+    assert widget.reloader.modules == ("qtreload",)
 
     os.environ["QTRELOAD_HOT_RELOAD"] = "0"
     assert install_hot_reload(None) is None
@@ -55,115 +55,85 @@ def _make_widget(qtbot, modules, messages=None):
 
     widget = QtReloadWidget(modules, log_func=messages.append if messages is not None else None)
     qtbot.addWidget(widget)
-    widget._reload_timer.setInterval(10)
+    widget.reloader._reload_timer.setInterval(10)
     return widget
 
 
-def test_reload_batches_multiple_files(qtbot, make_package):
-    """Test saving several files at once reloads all of them (previously only the last one)."""
+def _list_texts(list_widget):
+    return [list_widget.item(row).text() for row in range(list_widget.count())]
+
+
+def test_widget_forwards_reloader_signals(qtbot, make_package):
+    """Test the widget re-emits the reloader signals and shows its log messages."""
     import importlib
 
-    name, root = make_package({"a.py": "def value():\n    return 1\n", "b.py": "def value():\n    return 1\n"})
-    mod_a = importlib.import_module(f"{name}.a")
-    mod_b = importlib.import_module(f"{name}.b")
-    widget = _make_widget(qtbot, [name])
-
-    emitted = []
-    widget.evt_pyfile.connect(emitted.append)
-    for filename in ("a.py", "b.py"):
-        (root / filename).write_text("def value():\n    return 2\n")
-        widget.on_reload_file(str(root / filename))
-
-    qtbot.waitUntil(lambda: len(emitted) == 2, timeout=2000)
-    assert sorted(emitted) == [f"{name}.a", f"{name}.b"]
-    assert mod_a.value() == 2
-    assert mod_b.value() == 2
-
-
-def test_reload_readds_replaced_file(qtbot, make_package):
-    """Test files dropped by the watcher (atomic save) are watched again after reload."""
-    import importlib
-
-    name, root = make_package({"a.py": "def value():\n    return 1\n"})
+    name, root = make_package({"a.py": "def value():\n    return 1\n", "style.qss": ""})
     importlib.import_module(f"{name}.a")
-    widget = _make_widget(qtbot, [name])
-    path = str(root / "a.py")
-    assert path in widget._watcher.files()
+    messages = []
+    widget = _make_widget(qtbot, [name], messages)
 
-    widget._watcher.removePath(path)
-    with qtbot.waitSignal(widget.evt_pyfile, timeout=2000):
-        widget.on_reload_file(path)
-    assert path in widget._watcher.files()
-
-
-def test_reload_subpackage_module_name(qtbot, make_package):
-    """Test watching a subpackage reloads modules under their full name."""
-    import importlib
-
-    name, root = make_package({"sub/__init__.py": "", "sub/mod.py": "def value():\n    return 1\n"})
-    mod = importlib.import_module(f"{name}.sub.mod")
-    widget = _make_widget(qtbot, [f"{name}.sub"])
-    path = str(root / "sub" / "mod.py")
-    assert widget.get_module_for_path(path) == f"{name}.sub.mod"
-
-    (root / "sub" / "mod.py").write_text("def value():\n    return 2\n")
+    (root / "a.py").write_text("def value():\n    return 2\n")
     with qtbot.waitSignal(widget.evt_pyfile, timeout=2000) as blocker:
-        widget.on_reload_file(path)
-    assert blocker.args == [f"{name}.sub.mod"]
-    assert mod.value() == 2
+        widget.on_reload_file(str(root / "a.py"))
+    assert blocker.args == [f"{name}.a"]
+
+    with qtbot.waitSignal(widget.evt_stylesheet, timeout=2000):
+        widget.on_reload_file(str(root / "style.qss"))
+    assert messages
+    assert messages[-1] in widget._log_edit.toPlainText()
 
 
-def test_reload_skips_unimported_module(qtbot, make_package):
-    """Test files of modules that were never imported are not imported by the reloader."""
-    import sys
+def test_widget_shows_reloader_state(qtbot, make_package):
+    """Test the module and file lists follow changes made through the reloader."""
+    name, root = make_package({"a.py": "", "b.py": ""})
+    widget = _make_widget(qtbot, [])
+    assert _list_texts(widget._modules_list) == []
 
-    name, root = make_package({"a.py": "def value():\n    return 1\n"})
-    messages = []
-    widget = _make_widget(qtbot, [name], messages)
+    widget.reloader.add_module(name)
+    assert _list_texts(widget._modules_list) == [name]
+    assert _list_texts(widget._files_list) == [str(root / "a.py"), str(root / "b.py")]
 
-    widget.on_reload_file(str(root / "a.py"))
-    qtbot.waitUntil(lambda: any("has not been imported" in msg for msg in messages), timeout=2000)
-    assert f"{name}.a" not in sys.modules
-
-
-def test_reload_reports_syntax_error(qtbot, make_package):
-    """Test errors raised while executing the new code are shown and no signal is emitted."""
-    import importlib
-
-    name, root = make_package({"a.py": "def value():\n    return 1\n"})
-    mod = importlib.import_module(f"{name}.a")
-    messages = []
-    widget = _make_widget(qtbot, [name], messages)
-    emitted = []
-    widget.evt_pyfile.connect(emitted.append)
-
-    (root / "a.py").write_text("def value(:\n")
-    widget.on_reload_file(str(root / "a.py"))
-    qtbot.waitUntil(lambda: any("SyntaxError" in msg for msg in messages), timeout=2000)
-    assert emitted == []
-    assert mod.value() == 1
+    widget.reloader.set_patterns(py_pattern=("a.py",))
+    assert widget._py_pattern_text.text() == "a.py"
+    assert _list_texts(widget._files_list) == [str(root / "a.py")]
 
 
-def test_start_empty_then_add_module(qtbot, make_package):
-    """Test the watcher is connected even when the widget starts without modules."""
+def test_widget_pattern_fields(qtbot, make_package):
+    """Test editing pattern fields updates the reloader."""
+    name, root = make_package({"a.py": "", "b.py": "", "style.qss": ""})
+    widget = _make_widget(qtbot, [name])
+
+    widget._py_pattern_text.setText(" b.py , ")
+    widget.on_py_pattern_changed()
+    assert widget.reloader.py_pattern == ("b.py",)
+    assert widget.py_pattern == ("b.py",)
+    widget._stylesheet_pattern_text.setText("")
+    widget.on_stylesheet_pattern_changed()
+    assert widget.reloader.files == [str(root / "b.py")]
+
+
+def test_widget_remove_selected_module(qtbot, make_package):
+    """Test removing modules selected in the list."""
+    name_a, _ = make_package({"a.py": ""})
+    name_b, _ = make_package({"b.py": ""})
+    widget = _make_widget(qtbot, [name_a, name_b])
+
+    widget.on_remove_module()
+    assert widget.reloader.modules == (name_a, name_b), "Nothing selected - nothing removed"
+    widget._modules_list.item(0).setSelected(True)
+    widget.on_remove_module()
+    assert widget.reloader.modules == (name_b,)
+    assert _list_texts(widget._modules_list) == [name_b]
+
+
+def test_widget_add_module_on_return_only(qtbot, make_package):
+    """Test the module is added on Enter, not when the text field loses focus."""
     name, _ = make_package({"a.py": ""})
     widget = _make_widget(qtbot, [])
-    assert widget._watcher_connected
 
     widget._add_module_text.setText(name)
     widget._add_module_text.editingFinished.emit()
-    assert widget._modules == [], "Losing focus should not add the module"
+    assert widget.reloader.modules == (), "Losing focus should not add the module"
     widget._add_module_text.returnPressed.emit()
-    assert widget._modules == [name]
-    assert widget._watcher.files()
-
-    widget.setup_paths()
-    assert widget._watcher_connected
-
-
-def test_missing_dotted_module_does_not_raise(qtbot):
-    """Test unknown dotted module names are logged instead of raising."""
-    messages = []
-    widget = _make_widget(qtbot, ["not_a_module_qtreload.sub"], messages)
-    assert widget._modules == []
-    assert any("Could not find path" in msg for msg in messages)
+    assert widget.reloader.modules == (name,)
+    assert widget._add_module_text.text() == ""

@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import sys
 import typing as ty
 from contextlib import suppress
-from datetime import datetime
-from logging import getLogger
 from pathlib import Path
 
-from natsort import natsorted
-from qtpy.QtCore import QFileSystemWatcher, QModelIndex, Qt, QTimer, Signal
+from qtpy.QtCore import QModelIndex, Qt, Signal
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -28,23 +24,25 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from qtreload.pydevd_reload import Reload
-from qtreload.utilities import get_import_path, get_module_paths, path_to_module
-
-logger = getLogger(__name__)
-
-
-TIME_FMT = "%Y-%m-%d %H:%M:%S"
-# delay before processing file changes, so that bursts of saves are handled together
-RELOAD_DELAY_MS = 500
-
-PY_PATTERN = ("**/*.py",)
-PY_IGNORE_PATTERN = (
-    "**/__init__.py",
-    "**/_version.py",
-    "**/test_*.py",
+from qtreload.reloader import (
+    PY_IGNORE_PATTERN,
+    PY_PATTERN,
+    RELOAD_DELAY_MS,
+    STYLESHEET_PATTERN,
+    TIME_FMT,
+    HotReloader,
 )
-STYLESHEET_PATTERN = ("**/*.qss",)
+
+__all__ = [
+    "PY_IGNORE_PATTERN",
+    "PY_PATTERN",
+    "RELOAD_DELAY_MS",
+    "STYLESHEET_PATTERN",
+    "TIME_FMT",
+    "QtDevPopup",
+    "QtReloadWidget",
+    "get_main_window",
+]
 
 
 def get_main_window() -> QMainWindow | None:
@@ -58,7 +56,11 @@ def get_main_window() -> QMainWindow | None:
 
 
 class QtReloadWidget(QWidget):
-    """Reload Widget."""
+    """Widget to manage hot-reloading of modules.
+
+    All watching and reloading is done by the `HotReloader` available as `reloader`, this widget only displays
+    and edits its state. See `HotReloader` for a description of the parameters.
+    """
 
     evt_pyfile = Signal(str)
     evt_stylesheet = Signal()
@@ -74,29 +76,8 @@ class QtReloadWidget(QWidget):
         log_func: ty.Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(parent=parent)
-
-        if log_func is None:
-
-            def log_func(_: str) -> None:
-                return None
-
         self.log_func = log_func
-        # pattern information
-        self.py_pattern = py_pattern
-        self.ignore_py_pattern = ignore_py_pattern
-        self.stylesheet_pattern = stylesheet_pattern
-        self.widgets = []
-
-        # setup file watcher
-        self._watcher = QFileSystemWatcher()
-        self._watcher_connected = False
-
-        # changed paths are collected and processed together once changes stop for `RELOAD_DELAY_MS`
-        self._pending_paths: set[str] = set()
-        self._reload_timer = QTimer(self)
-        self._reload_timer.setSingleShot(True)
-        self._reload_timer.setInterval(RELOAD_DELAY_MS)
-        self._reload_timer.timeout.connect(self._process_pending_paths)
+        self.widgets: list[QWidget] = []
 
         self._add_module_text = QLineEdit(self)
         self._add_module_text.returnPressed.connect(self.on_add_module)
@@ -206,123 +187,138 @@ class QtReloadWidget(QWidget):
         main_layout.addLayout(layout)
         main_layout.addWidget(tabs, stretch=True)
 
-        # setup modules
-        modules_: list[str] = []
-        paths: list[Path] = []
-        for module in modules:
-            if module in modules_:
-                continue
-            path = self._resolve_module(module)
-            if path:
-                modules_.append(module)
-                paths.append(path)
-                self._modules_list.addItem(module)
-        self._modules = modules_
-        self._module_paths = paths
-        self.path_to_index_map: dict[str, int] = {}
-        if auto_connect:
-            self.setup_paths()
+        self.reloader = HotReloader(
+            modules,
+            parent=self,
+            auto_connect=auto_connect,
+            py_pattern=py_pattern,
+            ignore_py_pattern=ignore_py_pattern,
+            stylesheet_pattern=stylesheet_pattern,
+            log_func=self._on_log,
+        )
+        self.reloader.evt_pyfile.connect(self.evt_pyfile)
+        self.reloader.evt_stylesheet.connect(self.evt_stylesheet)
+        self.reloader.evt_watchlist_changed.connect(self._on_watchlist_changed)
+        self._on_watchlist_changed()
+
+    # Reloader state, kept for backwards compatibility
+
+    @property
+    def py_pattern(self) -> tuple[str, ...]:
+        """Python file patterns."""
+        return self.reloader.py_pattern
+
+    @py_pattern.setter
+    def py_pattern(self, value: tuple[str, ...]) -> None:
+        self.reloader.py_pattern = value
+
+    @property
+    def ignore_py_pattern(self) -> tuple[str, ...]:
+        """Ignored python file patterns."""
+        return self.reloader.ignore_py_pattern
+
+    @ignore_py_pattern.setter
+    def ignore_py_pattern(self, value: tuple[str, ...]) -> None:
+        self.reloader.ignore_py_pattern = value
+
+    @property
+    def stylesheet_pattern(self) -> tuple[str, ...]:
+        """Stylesheet file patterns."""
+        return self.reloader.stylesheet_pattern
+
+    @stylesheet_pattern.setter
+    def stylesheet_pattern(self, value: tuple[str, ...]) -> None:
+        self.reloader.stylesheet_pattern = value
+
+    @property
+    def path_to_index_map(self) -> dict[str, int]:
+        """Mapping of watched file path to the index of its module."""
+        return self.reloader.path_to_index_map
+
+    def replace_modules(self, modules: ty.Iterable[str]) -> None:
+        """Replace the watched module list and refresh watched paths."""
+        self.reloader.replace_modules(modules)
+
+    def setup_paths(self, clear: bool = False, connect: bool = True) -> None:
+        """Discover and watch files, optionally clearing the previous ones and connecting the watcher."""
+        self.reloader.setup_paths(clear=clear, connect=connect)
+
+    def get_module_path_for_path(self, path: str) -> Path:
+        """Return the import path of the watched module that `path` belongs to."""
+        return self.reloader.get_module_path_for_path(path)
+
+    def get_module_for_path(self, path: str) -> str:
+        """Map a watched file path to its fully qualified module name."""
+        return self.reloader.get_module_for_path(path)
+
+    def on_reload_file(self, path: str) -> None:
+        """Queue `path` for reloading once file changes settle."""
+        self.reloader.on_reload_file(path)
+
+    def log_message(self, msg: str) -> None:
+        """Log message."""
+        self.reloader.log_message(msg)
+
+    # UI
 
     def register_widget(self, widget: QWidget) -> None:
         """Register a QWidget as a child widget."""
         self.widgets.append(widget)
 
-    def replace_modules(self, modules: ty.Iterable[str]) -> None:
-        """Replace the watched module list and refresh watched paths."""
-        deduplicated_modules: list[str] = []
-        deduplicated_paths: list[Path] = []
+    def _on_log(self, msg: str) -> None:
+        """Show a log message from the reloader."""
+        with suppress(RuntimeError):
+            self._log_edit.append(msg)
+        if self.log_func is not None:
+            self.log_func(msg)
+
+    def _on_watchlist_changed(self) -> None:
+        """Show the reloader's modules, patterns and files."""
         self._modules_list.clear()
-
-        for module in modules:
-            if module in deduplicated_modules:
-                continue
-            path = self._resolve_module(module)
-            if path is None:
-                continue
-            deduplicated_modules.append(module)
-            deduplicated_paths.append(path)
-            self._modules_list.addItem(module)
-
-        self._modules = deduplicated_modules
-        self._module_paths = deduplicated_paths
-        self.on_refresh_filelist()
+        self._modules_list.addItems(list(self.reloader.modules))
+        self._files_list.clear()
+        self._files_list.addItems(self.reloader.files)
+        self.on_filter_changed()
+        self._py_pattern_text.setText(", ".join(self.reloader.py_pattern))
+        self._py_ignore_pattern_text.setText(", ".join(self.reloader.ignore_py_pattern))
+        self._stylesheet_pattern_text.setText(", ".join(self.reloader.stylesheet_pattern))
 
     def on_double_click(self, index: QModelIndex) -> None:
-        """Reload the module associated with the selected file."""
+        """Reload the selected file."""
         item = self._files_list.item(index.row())
-        self._reload_py(item.text())
+        self.reloader.reload_path(item.text())
 
     def on_py_pattern_changed(self) -> None:
-        """Update python pattern."""
-        py_pattern = tuple(self._py_pattern_text.text().split(","))
-        self.py_pattern = tuple(py.strip() for py in py_pattern)
-        ignore_py_pattern = tuple(self._py_ignore_pattern_text.text().split(","))
-        self.ignore_py_pattern = tuple(py.strip() for py in ignore_py_pattern)
-        self.on_refresh_filelist()
+        """Update python patterns from the text fields."""
+        self.reloader.set_patterns(
+            py_pattern=_split_patterns(self._py_pattern_text.text()),
+            ignore_py_pattern=_split_patterns(self._py_ignore_pattern_text.text()),
+        )
 
     def on_stylesheet_pattern_changed(self) -> None:
-        """Update stylesheet pattern."""
-        stylesheet_pattern = tuple(self._stylesheet_pattern_text.text().split(","))
-        self.stylesheet_pattern = tuple(py.strip() for py in stylesheet_pattern)
-        self.on_refresh_filelist()
+        """Update stylesheet patterns from the text field."""
+        self.reloader.set_patterns(stylesheet_pattern=_split_patterns(self._stylesheet_pattern_text.text()))
 
     def on_add_module(self) -> None:
-        """Add new module to the list."""
+        """Add the module typed in the text field."""
         module = self._add_module_text.text().strip()
         if not module:
             self.log_message("Please specify the name of the module to add.")
             return
-        if module in self._modules:
-            self.log_message(f"The module '{module}' is already in the list.")
-            return
-        path = self._resolve_module(module)
-        if not path:
-            return
-        self._modules.append(module)
-        self._module_paths.append(path)
-        self._modules_list.addItem(module)
-        self._add_module_text.clear()
-        self.on_refresh_filelist()
+        if self.reloader.add_module(module):
+            self._add_module_text.clear()
 
     def on_remove_module(self) -> None:
-        """Remove module(s) from the list."""
+        """Remove the selected module(s)."""
         items = self._modules_list.selectedItems()
         if not items:
             self.log_message("No modules selected.")
             return
-        indices = [self._modules_list.row(item) for item in items]
-        modules = [item.text() for item in items]
-        for index in sorted(indices, reverse=True):
-            self._modules_list.takeItem(index)
-            self._module_paths.pop(index)
-        for module in modules:
-            self._modules.remove(module)
-        self.on_refresh_filelist()
+        self.reloader.remove_modules([item.text() for item in items])
 
     def on_refresh_filelist(self) -> None:
-        """Refresh file list."""
-        self.setup_paths(clear=True, connect=False)
-
-    def setup_paths(self, clear: bool = False, connect: bool = True) -> None:
-        """Setup paths."""
-        if clear:
-            self._remove_filenames()
-        self._add_filenames()
-        if connect and not self._watcher_connected:
-            self._watcher.fileChanged.connect(self.on_reload_file)
-            self._watcher_connected = True
-
-    def _resolve_module(self, module: str) -> Path | None:
-        """Return the import path of `module`, logging the outcome."""
-        try:
-            path = get_import_path(module)
-        except ValueError:
-            path = None
-        if path is None:
-            self.log_message(f"Could not find path for the module '{module}'")
-        else:
-            self.log_message(f"Watching for '{module}' changes in '{path}'")
-        return path
+        """Rediscover files of all modules."""
+        self.reloader.refresh()
 
     def on_filter_changed(self, text: str | None = None) -> None:
         """Filter files in the list."""
@@ -331,77 +327,13 @@ class QtReloadWidget(QWidget):
             item = self._files_list.item(row)
             item.setHidden(text not in item.text() if text else False)
 
-    def _remove_filenames(self) -> None:
-        """Clear existing filenames."""
-        files = self._watcher.files()
-        if files:
-            self._watcher.removePaths(files)
-        directories = self._watcher.directories()
-        if directories:
-            self._watcher.removePaths(directories)
-        self.log_message(f"Removed {len(files)} files and {len(directories)} directories from watcher.")
-
-    def _add_filenames(self) -> None:
-        """Set paths."""
-        all_paths = []
-        mapping = {}
-        for i, module in enumerate(self._modules):
-            module_path = get_import_path(module)
-            if module_path:
-                paths = self._get_file_paths(module)
-                all_paths += paths
-                for _path in paths:
-                    mapping[_path] = i
-        self._set_paths(all_paths)
-        self.path_to_index_map = mapping
-
-    def _get_file_paths(self, module: str) -> list[str]:
-        """Get file paths."""
-        py_paths, qss_paths = get_module_paths(
-            module,
-            py_pattern=self.py_pattern,
-            ignore_py_pattern=self.ignore_py_pattern,
-            stylesheet_pattern=self.stylesheet_pattern,
-            log_func=self.log_func,
-        )
-        py = len(py_paths)
-        qss = len(qss_paths)
-        self.log_message(f"Found {py} python files and {qss} qss files '{module}'")
-        paths = py_paths + qss_paths
-        return [str(p) for p in paths]
-
-    def _set_paths(self, paths: list[str]) -> None:
-        self.log_message(f"Added {len(paths)} paths to watcher")
-        if paths:
-            self._watcher.addPaths(paths)
-        self._files_list.clear()
-        for path in natsorted(paths):
-            self._files_list.addItem(path)
-
-    def get_module_path_for_path(self, path: str) -> Path:
-        """Map path to module."""
-        index = self.path_to_index_map.get(path, None)
-        if index is None:
-            raise ValueError("Path not found in module paths")
-        return self._module_paths[index]
-
-    def get_module_for_path(self, path: str) -> str:
-        """Map a watched file path to its fully qualified module name."""
-        index = self.path_to_index_map.get(path, None)
-        if index is None:
-            raise ValueError("Path not found in module paths")
-        return path_to_module(path, self._module_paths[index], self._modules[index])
-
     def on_reload_py_files(self) -> None:
-        """Reload python files."""
-        for path in self._watcher.files():
-            if path.endswith(".py"):
-                self._reload_py(path)
+        """Reload all python files."""
+        self.reloader.reload_all_py()
 
     def on_reload_stylesheet_files(self) -> None:
         """Reload all stylesheet files."""
-        self.log_message("Reloading all stylesheet files...")
-        self.evt_stylesheet.emit()
+        self.reloader.reload_stylesheets()
 
     def on_toggle_widget_borders(self, state: int) -> None:
         """Toggle widget borders."""
@@ -425,67 +357,10 @@ class QtReloadWidget(QWidget):
                 widget.setStyleSheet(stylesheet)
         self.log_message(f"Toggled widget borders (state={state})")
 
-    def on_reload_file(self, path: str) -> None:
-        """Queue `path` for reloading once file changes settle."""
-        self._pending_paths.add(path)
-        self._reload_timer.start()
 
-    def _process_pending_paths(self) -> None:
-        """Reload all queued paths."""
-        paths = natsorted(self._pending_paths)
-        self._pending_paths.clear()
-        watched = set(self._watcher.files())
-        for path in paths:
-            if path not in self.path_to_index_map:
-                # module was removed from the watch list while the change was pending
-                continue
-            if not Path(path).exists():
-                self.log_message(f"'{path}' no longer exists - skipping")
-                continue
-            # editors that save by replacing the file cause the watcher to drop the path, so add it back
-            if path not in watched:
-                self._watcher.addPath(path)
-            self._reload_file(path)
-
-    def _reload_file(self, path: str) -> None:
-        if path.endswith(".py"):
-            self._reload_py(path)
-        elif path.endswith(".qss"):
-            self._reload_qss(path)
-
-    def _reload_py(self, path: str) -> None:
-        try:
-            module = self.get_module_for_path(path)
-        except ValueError as e:
-            self.log_message(f"failed to reload '{path}' Error={e}...")
-            return
-        mod = sys.modules.get(module)
-        if mod is None:
-            self.log_message(f"'{module}' has not been imported yet - skipping")
-            return
-        reloader = Reload(mod)
-        reloader.apply()
-        for warning in reloader.warnings:
-            self.log_message(f"'{module}': {warning}")
-        if reloader.error is not None:
-            error = reloader.error
-            self.log_message(f"failed to reload '{module}' Error={type(error).__name__}: {error}")
-            return
-        self.log_message(f"'{module}' (changed={reloader.found_change})")
-        self.evt_pyfile.emit(module)
-
-    def _reload_qss(self, path: str) -> None:
-        self.evt_stylesheet.emit()
-        self.log_message(f"'{Path(path).name}' changed")
-
-    def log_message(self, msg: str) -> None:
-        """Log message."""
-        now = datetime.now().strftime(TIME_FMT)
-        msg = f"{now} - {msg}"
-        with suppress(Exception):
-            self._log_edit.append(msg)
-        logger.debug(msg)
-        self.log_func(msg)
+def _split_patterns(text: str) -> tuple[str, ...]:
+    """Split comma-separated patterns, dropping whitespace and empty entries."""
+    return tuple(pattern.strip() for pattern in text.split(",") if pattern.strip())
 
 
 class QtDevPopup(QDialog):
