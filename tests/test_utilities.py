@@ -149,3 +149,42 @@ def test_get_import_path_builtin_module():
 def test_get_import_path_missing_parent_package():
     """Test missing dotted modules return None instead of raising."""
     assert get_import_path("not_a_module_qtreload.submodule") is None
+
+
+def test_get_imported_modules(tmp_path):
+    """Test absolute, relative and package-relative imports are resolved."""
+    from qtreload.utilities import get_imported_modules
+
+    source = (
+        "import os.path\n"
+        "import json as js\n"
+        "from . import sibling\n"
+        "from .sub import thing\n"
+        "from ..top import x, y\n"
+        "from collections import *\n"
+        "from .... import too_far\n"
+        "def f():\n"
+        "    from pkg.lazy import z\n"
+    )
+    path = tmp_path / "mod.py"
+    path.write_text(source)
+    names = get_imported_modules(path, "pkg.inner.mod")
+    assert {"os", "os.path", "json", "collections", "pkg.lazy", "pkg.lazy.z"} <= names
+    assert {"pkg.inner", "pkg.inner.sibling", "pkg.inner.sub", "pkg.inner.sub.thing"} <= names
+    assert {"pkg", "pkg.top", "pkg.top.x", "pkg.top.y"} <= names
+    assert not any("too_far" in name for name in names)
+    assert "collections.*" not in names
+
+    init = tmp_path / "__init__.py"
+    init.write_text("from .core import run\n")
+    assert {"pkg.inner", "pkg.inner.core", "pkg.inner.core.run"} <= get_imported_modules(init, "pkg.inner")
+
+
+def test_get_imported_modules_invalid_source(tmp_path):
+    """Test unparsable or missing files return no imports."""
+    from qtreload.utilities import get_imported_modules
+
+    path = tmp_path / "bad.py"
+    path.write_text("def broken(:\n")
+    assert get_imported_modules(path, "bad") == set()
+    assert get_imported_modules(tmp_path / "missing.py", "missing") == set()

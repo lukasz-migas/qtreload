@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import heapq
 import sys
 import typing as ty
+from contextlib import suppress
 from datetime import datetime
 from logging import getLogger
 from pathlib import Path
@@ -12,7 +14,7 @@ from natsort import natsorted
 from qtpy.QtCore import QFileSystemWatcher, QObject, QTimer, Signal
 
 from qtreload.pydevd_reload import Reload
-from qtreload.utilities import get_import_path, get_module_paths, path_to_module
+from qtreload.utilities import get_import_path, get_imported_modules, get_module_paths, path_to_module
 
 logger = getLogger(__name__)
 
@@ -343,11 +345,12 @@ class HotReloader(QObject):
         self._reload_timer.start()
 
     def _process_pending_paths(self) -> None:
-        """Rediscover changed directories, then reload all queued paths."""
+        """Rediscover changed directories, then reload all queued paths as one batch."""
         self._discover_pending_directories()
         paths = natsorted(self._pending_paths)
         self._pending_paths.clear()
         watched = set(self._watcher.files())
+        to_reload: list[str] = []
         for path in paths:
             if path not in self.path_to_index_map:
                 # module was removed from the watch list while the change was pending
@@ -358,7 +361,59 @@ class HotReloader(QObject):
             # editors that save by replacing the file cause the watcher to drop the path, so add it back
             if path not in watched:
                 self._watcher.addPath(path)
-            self.reload_path(path)
+            to_reload.append(path)
+        self._reload_batch(to_reload)
+
+    def _reload_batch(self, paths: list[str]) -> None:
+        """Reload python files in import order, then signal stylesheet changes once."""
+        for path in self._order_by_imports([path for path in paths if path.endswith(".py")]):
+            self._reload_py(path)
+        stylesheets = [path for path in paths if path.endswith(".qss")]
+        if stylesheets:
+            self.log_message(f"{', '.join(repr(Path(path).name) for path in stylesheets)} changed")
+            self.evt_stylesheet.emit()
+
+    def _order_by_imports(self, paths: list[str]) -> list[str]:
+        """Order python files so that each module is reloaded after the modules (from `paths`) it imports.
+
+        This matters when a module starts using a name that was just added to another module: reloading the
+        importing module first would fail. Ties keep the natural sort order, as do import cycles.
+        """
+        paths = natsorted(set(paths))
+        module_to_path: dict[str, str] = {}
+        for path in paths:
+            with suppress(ValueError):
+                module_to_path[self.get_module_for_path(path)] = path
+
+        dependencies: dict[str, set[str]] = {}
+        dependents: dict[str, list[str]] = {path: [] for path in paths}
+        for module, path in module_to_path.items():
+            imported = get_imported_modules(path, module)
+            dependencies[path] = {module_to_path[name] for name in imported if name in module_to_path} - {path}
+            for dependency in dependencies[path]:
+                dependents[dependency].append(path)
+
+        position = {path: i for i, path in enumerate(paths)}
+        remaining = {path: len(dependencies.get(path, ())) for path in paths}
+        ready = [(position[path], path) for path, count in remaining.items() if count == 0]
+        heapq.heapify(ready)
+        ordered: list[str] = []
+        while remaining:
+            if not ready:
+                # import cycle - continue with the first remaining file in natural order
+                path = min(remaining, key=position.__getitem__)
+                heapq.heappush(ready, (position[path], path))
+            _, path = heapq.heappop(ready)
+            if path not in remaining:
+                continue
+            del remaining[path]
+            ordered.append(path)
+            for dependent in dependents[path]:
+                if dependent in remaining:
+                    remaining[dependent] -= 1
+                    if remaining[dependent] == 0:
+                        heapq.heappush(ready, (position[dependent], dependent))
+        return ordered
 
     def reload_path(self, path: str) -> None:
         """Reload a python or stylesheet file immediately."""
@@ -368,10 +423,9 @@ class HotReloader(QObject):
             self._reload_qss(path)
 
     def reload_all_py(self) -> None:
-        """Reload all watched python files."""
-        for path in self.files:
-            if path.endswith(".py"):
-                self._reload_py(path)
+        """Reload all watched python files, in import order."""
+        for path in self._order_by_imports([path for path in self.files if path.endswith(".py")]):
+            self._reload_py(path)
 
     def reload_stylesheets(self) -> None:
         """Ask listeners to re-apply stylesheets."""

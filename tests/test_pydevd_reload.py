@@ -34,3 +34,17 @@ def test_reload_collects_warnings(make_package):
     reloader.apply()
     assert reloader.error is None
     assert any("value" in warning for warning in reloader.warnings)
+
+
+def test_reload_with_relative_imports(make_package):
+    """Test relative imports work in reloaded modules and package __init__ files."""
+    name, root = make_package({"b.py": "def old():\n    return 1\n", "a.py": "from .b import old\n"})
+    (root / "__init__.py").write_text("from .b import old\n")
+    importlib.invalidate_caches()
+    package = importlib.import_module(name)
+    mod_a = importlib.import_module(f"{name}.a")
+
+    for mod in (mod_a, package):
+        reloader = Reload(mod)
+        reloader.apply()
+        assert reloader.error is None, reloader.error

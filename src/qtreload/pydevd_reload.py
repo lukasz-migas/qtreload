@@ -255,6 +255,11 @@ class Reload:
                     # on a reload.
                     new_namespace["__name__"] = "__main_reloaded__"
 
+            # keep the import metadata, otherwise relative imports cannot be resolved (and fail in packages)
+            for attr in ("__package__", "__spec__", "__path__", "__loader__"):
+                if attr in modns:
+                    new_namespace[attr] = modns[attr]
+
             execfile(self.mod_filename, new_namespace, new_namespace)
             # Now we get to the hard part
             oldnames = set(modns)

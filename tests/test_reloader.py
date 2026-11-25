@@ -1,5 +1,6 @@
 import importlib
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -252,3 +253,64 @@ def test_file_system_events_end_to_end(qtbot, make_reloader, make_package):
 
     (root / "new.py").write_text("")
     qtbot.waitUntil(lambda: str(root / "new.py") in reloader.files, timeout=5000)
+
+
+def test_reload_batch_in_import_order(qtbot, make_reloader, make_package):
+    """Test a module is reloaded after the module it imports, so it can use names that were just added there."""
+    name, root = make_package(
+        {
+            "a.py": "from .b import old\n\ndef value():\n    return old()\n",
+            "b.py": "def old():\n    return 1\n",
+        }
+    )
+    mod_a = importlib.import_module(f"{name}.a")
+    reloader = make_reloader([name])
+    emitted = []
+    reloader.evt_pyfile.connect(emitted.append)
+
+    # 'a' sorts first, but now needs a function that only exists in the new version of 'b'
+    (root / "a.py").write_text("from .b import new\n\ndef value():\n    return new()\n")
+    (root / "b.py").write_text("def old():\n    return 1\n\ndef new():\n    return 2\n")
+    reloader.on_reload_file(str(root / "a.py"))
+    reloader.on_reload_file(str(root / "b.py"))
+
+    qtbot.waitUntil(lambda: len(emitted) == 2, timeout=2000)
+    assert emitted == [f"{name}.b", f"{name}.a"]
+    assert mod_a.value() == 2
+
+
+def test_order_by_imports(make_reloader, make_package):
+    """Test chains keep dependencies first, unrelated files keep natural order and cycles do not hang."""
+    name, root = make_package(
+        {
+            "a.py": "from . import b\n",
+            "b.py": "",
+            "c.py": "",
+            "d.py": "",
+            "x.py": "from .y import f\n",
+            "y.py": "from .x import g\n",
+        }
+    )
+    (root / "b.py").write_text(f"import {name}.c\n")
+    reloader = make_reloader([name])
+    paths = [str(root / f"{stem}.py") for stem in ("y", "x", "d", "c", "b", "a")]
+
+    ordered = [Path(path).name for path in reloader._order_by_imports(paths)]
+    assert ordered == ["c.py", "b.py", "a.py", "d.py", "x.py", "y.py"]
+    assert reloader._order_by_imports([]) == []
+    assert len(reloader._order_by_imports([*paths, "/not/watched.py"])) == len(paths) + 1
+
+
+def test_stylesheet_signal_once_per_batch(qtbot, make_reloader, make_package):
+    name, root = make_package({"one.qss": "", "two.qss": ""})
+    messages = []
+    reloader = make_reloader([name], messages)
+    emitted = []
+    reloader.evt_stylesheet.connect(lambda: emitted.append(True))
+
+    reloader.on_reload_file(str(root / "one.qss"))
+    reloader.on_reload_file(str(root / "two.qss"))
+    qtbot.waitUntil(lambda: bool(emitted), timeout=2000)
+    qtbot.wait(50)
+    assert emitted == [True]
+    assert any("'one.qss', 'two.qss' changed" in msg for msg in messages)

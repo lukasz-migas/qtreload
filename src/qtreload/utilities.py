@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import sys
 import typing as ty
@@ -166,3 +167,38 @@ def _path_to_module_relative_to(path: Path, module_path: Path, module: str) -> s
     if module_parts[-1] == "__init__":
         module_parts.pop()
     return ".".join([module, *module_parts])
+
+
+def get_imported_modules(path: str | Path, module: str) -> set[str]:
+    """Return the names of modules imported by the python file at `path`, whose module name is `module`.
+
+    Relative imports are resolved, parent packages are included (`import a.b` gives 'a' and 'a.b') and names
+    imported with `from x import y` are included as possible submodules ('x.y'). Files that cannot be read or
+    parsed return an empty set.
+    """
+    path = Path(path)
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError, ValueError):
+        return set()
+
+    package = module if path.name == "__init__.py" else module.rpartition(".")[0]
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                try:
+                    base = importlib.util.resolve_name("." * node.level + base, package)
+                except (ImportError, ValueError):
+                    continue
+            names.add(base)
+            names.update(f"{base}.{alias.name}" for alias in node.names if alias.name != "*")
+
+    # include parent packages of every imported name
+    for name in list(names):
+        parts = name.split(".")
+        names.update(".".join(parts[:i]) for i in range(1, len(parts)))
+    return names
