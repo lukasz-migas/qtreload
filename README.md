@@ -119,6 +119,25 @@ reloader.apply_stylesheets()
 
 `evt_stylesheet_changed(path)` is emitted for every changed stylesheet, and `evt_stylesheet()` once per batch of changes.
 
+### Rebuilding widgets
+
+Code in `__init__` only runs when a widget is created, so e.g. a new button does not appear in a widget that already
+exists. Register a factory to have the widget rebuilt automatically whenever its module changes. The new widget is put
+exactly where the old one was (layouts, splitters, tabs, docks, scroll areas, central widget or top-level window):
+
+```python
+live = reloader.register_factory(lambda: SettingsPanel(config))
+layout.addWidget(live.widget)
+
+# the module of the widget's class and of the factory always trigger a rebuild, add more with `modules`
+live = reloader.register_factory(lambda: MainPanel(config), modules=["myapp.panels"])
+live.evt_rebuilt.connect(lambda widget: widget.evt_changed.connect(on_changed))
+```
+
+The widget is rebuilt once per batch of changes, not when its modules failed to reload, and not if it was deleted in the
+meantime (e.g. a dialog that was closed). While the factory runs, `live.widget` is still the old instance, so you can
+copy its state to the new one.
+
 ## When it works like magic
 
  There are countless examples where this approach really well. Some examples:
@@ -132,7 +151,7 @@ reloader.apply_stylesheets()
 While this approach can be extremely useful and can save a lot of time, it has a couple of limitations:
 
 - `__init__.py` files are not watched by default - remove `**/__init__.py` from the ignore pattern to reload them too
-- some changes to GUI code cannot be hot-reloaded - if e.g., you are modifying the `QMainWindow` and just added a new button, this button will not be shown. In order to show it, you will still need to restart the application. If, however, you were modifying a plugin or a dialog that is shown upon clicking on e.g. menu item, these changes WILL take place.
+- changes to the layout of a widget that already exists (e.g. a new button in `__init__`) are only visible once the widget is created again - register its factory (see above) to have it rebuilt automatically, or restart the application. Dialogs and plugins that are created when opened pick up the changes the next time they are shown.
 - module and class level constants are not changed on reload (so application state is kept) - functions, methods, properties, decorated functions and dataclass fields are updated
 - adding, removing or changing enum members and changing closure variables of module-level functions require a restart (a warning is shown in the log)
 - new files are watched as soon as they are created, but they are only reloaded once your application has imported them

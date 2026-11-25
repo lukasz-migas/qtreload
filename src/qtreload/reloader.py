@@ -18,6 +18,11 @@ from natsort import natsorted
 from qtpy.QtCore import QCoreApplication, QFileSystemWatcher, QObject, QTimer, Signal
 
 from qtreload.pydevd_reload import Reload
+
+if ty.TYPE_CHECKING:
+    from qtpy.QtWidgets import QWidget
+
+    from qtreload.live import LiveWidget
 from qtreload.utilities import (
     get_import_path,
     get_imported_modules,
@@ -148,6 +153,8 @@ class HotReloader(QObject):
     evt_reload_failed = Signal(object)
     # emitted with every (timestamped) log message and its logging level (e.g. logging.WARNING)
     evt_message = Signal(str, int)
+    # emitted with the list of `ReloadResult` after a batch of python modules was reloaded (one or more modules)
+    evt_batch_reloaded = Signal(object)
     # emitted when a stylesheet changed or a stylesheet reload was requested
     evt_stylesheet = Signal()
     # emitted with the path of every stylesheet that changed
@@ -170,6 +177,7 @@ class HotReloader(QObject):
         self.log_func = log_func
         self._messages: deque[tuple[str, int]] = deque(maxlen=MAX_MESSAGES)
         self._stylesheets: list[_StylesheetRegistration] = []
+        self._live_widgets: list[LiveWidget] = []
         self.py_pattern = py_pattern
         self.ignore_py_pattern = ignore_py_pattern
         self.stylesheet_pattern = stylesheet_pattern
@@ -217,6 +225,49 @@ class HotReloader(QObject):
     def stylesheets(self) -> list[str]:
         """Paths of the stylesheets registered with `register_stylesheet`, in registration order."""
         return list(dict.fromkeys(registration.path for registration in self._stylesheets))
+
+    # Widget factories
+
+    @property
+    def live_widgets(self) -> list[LiveWidget]:
+        """Widgets registered with `register_factory`."""
+        return list(self._live_widgets)
+
+    def register_factory(
+        self,
+        factory: ty.Callable[[], QWidget],
+        widget: QWidget | None = None,
+        modules: ty.Iterable[str] = (),
+    ) -> LiveWidget:
+        """Rebuild a widget with `factory` and put it in place of the old one whenever its code is reloaded.
+
+        Parameters
+        ----------
+        factory : Callable[[], QWidget]
+            Function creating the widget, e.g. `lambda: MyPanel(settings)`.
+        widget : QWidget, optional
+            Current instance, created with `factory` if not given. Add `LiveWidget.widget` to your layout.
+        modules : Iterable[str]
+            Additional modules or packages (e.g. 'myapp.panels') whose changes rebuild the widget. The module of the
+            widget's class and of the factory are always included.
+
+        Returns
+        -------
+        LiveWidget
+            Handle with the current instance (`widget`) and a signal emitted after each rebuild (`evt_rebuilt`).
+        """
+        from qtreload.live import LiveWidget
+
+        live = LiveWidget(self, factory, widget=widget, modules=modules)
+        self._live_widgets.append(live)
+        self.log_message(f"Registered factory of '{live.name}' (modules: {', '.join(live.modules)})")
+        return live
+
+    def unregister_factory(self, live: LiveWidget) -> None:
+        """Stop rebuilding the widget of `live`. The current widget is kept."""
+        if live in self._live_widgets:
+            self._live_widgets.remove(live)
+            live._disconnect()
 
     # Stylesheets
 
@@ -577,8 +628,7 @@ class HotReloader(QObject):
         """Reload python files in import order, then stylesheets."""
         registered = set(self.stylesheets)
         python = [path for path in paths if path.endswith(".py") and path not in registered]
-        for path in self._order_by_imports(python):
-            self._reload_py(path)
+        self._reload_py_batch(self._order_by_imports(python))
         stylesheets = [path for path in paths if path.endswith(".qss") or path in registered]
         if stylesheets:
             self._reload_stylesheets(stylesheets)
@@ -641,15 +691,22 @@ class HotReloader(QObject):
         """
         registered = path in self.stylesheets
         if path.endswith(".py") and not registered:
-            return self._reload_py(path)
+            results = self._reload_py_batch([path])
+            return results[0] if results else None
         if path.endswith(".qss") or registered:
             self._reload_stylesheets([path])
         return None
 
     def reload_all_py(self) -> None:
         """Reload all watched python files, in import order."""
-        for path in self._order_by_imports([path for path in self.files if path.endswith(".py")]):
-            self._reload_py(path)
+        self._reload_py_batch(self._order_by_imports([path for path in self.files if path.endswith(".py")]))
+
+    def _reload_py_batch(self, paths: list[str]) -> list[ReloadResult]:
+        """Reload python files in the given order and emit `evt_batch_reloaded` if any module was reloaded."""
+        results = [result for result in (self._reload_py(path) for path in paths) if result is not None]
+        if results:
+            self.evt_batch_reloaded.emit(results)
+        return results
 
     def reload_stylesheets(self) -> None:
         """Re-apply registered stylesheets and ask listeners to re-apply theirs."""

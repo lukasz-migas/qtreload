@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 
-
 def test_reloader_discovers_files(make_reloader, make_package):
     name, root = make_package({"a.py": "", "sub/__init__.py": "", "sub/b.py": "", "style.qss": ""})
     reloader = make_reloader([name, name, "not_a_module_qtreload"])
