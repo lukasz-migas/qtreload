@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import heapq
+import logging
 import sys
+import traceback
 import typing as ty
+from collections import deque
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import datetime
-from logging import getLogger
 from pathlib import Path
 
 from natsort import natsorted
@@ -16,7 +19,7 @@ from qtpy.QtCore import QFileSystemWatcher, QObject, QTimer, Signal
 from qtreload.pydevd_reload import Reload
 from qtreload.utilities import get_import_path, get_imported_modules, get_module_paths, path_to_module
 
-logger = getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
 # delay before processing file changes, so that bursts of saves are handled together
@@ -31,6 +34,59 @@ PY_IGNORE_PATTERN = (
 STYLESHEET_PATTERN = ("**/*.qss",)
 # directories that are never watched for new files
 IGNORE_DIRECTORIES = ("__pycache__",)
+# number of recent log messages kept in `HotReloader.messages`
+MAX_MESSAGES = 1000
+
+
+@dataclass(frozen=True)
+class ReloadResult:
+    """Outcome of reloading one python module.
+
+    Attributes
+    ----------
+    module : str
+        Name of the module.
+    path : str
+        Path of the module file.
+    changed : bool
+        Whether anything was updated or added.
+    added : tuple[str, ...]
+        Names added to the module or its classes, e.g. 'new_function' or 'MyClass.new_method'.
+    updated : tuple[str, ...]
+        Functions and methods whose code changed, e.g. 'function' or 'MyClass.method'.
+    warnings : tuple[str, ...]
+        Problems that did not stop the reload, e.g. attributes whose type changed and were skipped.
+    error : BaseException, optional
+        Exception raised while executing the new code. Nothing was updated if set.
+    traceback : str
+        Formatted traceback of `error`, empty if there is no error.
+    """
+
+    module: str
+    path: str
+    changed: bool = False
+    added: tuple[str, ...] = ()
+    updated: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    error: BaseException | None = None
+    traceback: str = ""
+
+    @property
+    def ok(self) -> bool:
+        """Whether the module was reloaded without error."""
+        return self.error is None
+
+    def summary(self, max_names: int = 5) -> str:
+        """Short description of the outcome, listing at most `max_names` names per category."""
+        if self.error is not None:
+            return f"{type(self.error).__name__}: {self.error}"
+        parts = []
+        for label, names in (("updated", self.updated), ("added", self.added)):
+            if names:
+                shown = ", ".join(names[:max_names])
+                more = f" (+{len(names) - max_names} more)" if len(names) > max_names else ""
+                parts.append(f"{label} {shown}{more}")
+        return "; ".join(parts) if parts else "no changes"
 
 
 class HotReloader(QObject):
@@ -54,13 +110,19 @@ class HotReloader(QObject):
     stylesheet_pattern : tuple[str, ...]
         Glob patterns of stylesheet files to watch.
     log_func : Callable[[str], None], optional
-        Called with every (timestamped) log message.
+        Called with every (timestamped) log message. See also `evt_message` and `messages`.
     delay_ms : int
         Changes are reloaded once no new change was seen for this many milliseconds.
     """
 
     # emitted with the module name after it was reloaded successfully
     evt_pyfile = Signal(str)
+    # emitted with the `ReloadResult` after a module was reloaded successfully
+    evt_reloaded = Signal(object)
+    # emitted with the `ReloadResult` after a module failed to reload
+    evt_reload_failed = Signal(object)
+    # emitted with every (timestamped) log message and its logging level (e.g. logging.WARNING)
+    evt_message = Signal(str, int)
     # emitted when a stylesheet changed or a stylesheet reload was requested
     evt_stylesheet = Signal()
     # emitted after the watched modules, patterns or files were updated
@@ -79,6 +141,7 @@ class HotReloader(QObject):
     ) -> None:
         super().__init__(parent)
         self.log_func = log_func
+        self._messages: deque[tuple[str, int]] = deque(maxlen=MAX_MESSAGES)
         self.py_pattern = py_pattern
         self.ignore_py_pattern = ignore_py_pattern
         self.stylesheet_pattern = stylesheet_pattern
@@ -111,6 +174,11 @@ class HotReloader(QObject):
     def modules(self) -> tuple[str, ...]:
         """Names of the watched modules."""
         return tuple(self._modules)
+
+    @property
+    def messages(self) -> list[tuple[str, int]]:
+        """Recent log messages as (message, logging level), oldest first."""
+        return list(self._messages)
 
     @property
     def files(self) -> list[str]:
@@ -191,7 +259,7 @@ class HotReloader(QObject):
         except ValueError:
             path = None
         if path is None:
-            self.log_message(f"Could not find path for the module '{module}'")
+            self.log_message(f"Could not find path for the module '{module}'", logging.WARNING)
         else:
             self.log_message(f"Watching for '{module}' changes in '{path}'")
         return path
@@ -216,7 +284,7 @@ class HotReloader(QObject):
             try:
                 paths = self._get_file_paths(module)
             except ValueError as e:
-                self.log_message(f"Could not discover files of '{module}': {e}")
+                self.log_message(f"Could not discover files of '{module}': {e}", logging.WARNING)
                 continue
             self.log_message(f"Found {len(paths)} files in '{module}'")
             all_paths += paths
@@ -415,12 +483,17 @@ class HotReloader(QObject):
                         heapq.heappush(ready, (position[dependent], dependent))
         return ordered
 
-    def reload_path(self, path: str) -> None:
-        """Reload a python or stylesheet file immediately."""
+    def reload_path(self, path: str) -> ReloadResult | None:
+        """Reload a python or stylesheet file immediately.
+
+        Returns the result for python files, or None if the file is a stylesheet or its module was not reloaded
+        (e.g. not imported yet).
+        """
         if path.endswith(".py"):
-            self._reload_py(path)
-        elif path.endswith(".qss"):
+            return self._reload_py(path)
+        if path.endswith(".qss"):
             self._reload_qss(path)
+        return None
 
     def reload_all_py(self) -> None:
         """Reload all watched python files, in import order."""
@@ -432,34 +505,49 @@ class HotReloader(QObject):
         self.log_message("Reloading all stylesheet files...")
         self.evt_stylesheet.emit()
 
-    def _reload_py(self, path: str) -> None:
+    def _reload_py(self, path: str) -> ReloadResult | None:
         try:
             module = self.get_module_for_path(path)
         except ValueError as e:
-            self.log_message(f"failed to reload '{path}' Error={e}...")
-            return
+            self.log_message(f"failed to reload '{path}' Error={e}...", logging.ERROR)
+            return None
         mod = sys.modules.get(module)
         if mod is None:
             self.log_message(f"'{module}' has not been imported yet - skipping")
-            return
+            return None
         reloader = Reload(mod)
         reloader.apply()
-        for warning in reloader.warnings:
-            self.log_message(f"'{module}': {warning}")
-        if reloader.error is not None:
-            error = reloader.error
-            self.log_message(f"failed to reload '{module}' Error={type(error).__name__}: {error}")
-            return
-        self.log_message(f"'{module}' (changed={reloader.found_change})")
+        error = reloader.error
+        result = ReloadResult(
+            module=module,
+            path=path,
+            changed=reloader.found_change,
+            added=tuple(reloader.added),
+            updated=tuple(reloader.updated),
+            warnings=tuple(reloader.warnings),
+            error=error,
+            traceback="".join(traceback.format_exception(type(error), error, error.__traceback__)) if error else "",
+        )
+        for warning in result.warnings:
+            self.log_message(f"'{module}': {warning}", logging.WARNING)
+        if not result.ok:
+            self.log_message(f"failed to reload '{module}' Error={result.summary()}", logging.ERROR)
+            self.evt_reload_failed.emit(result)
+            return result
+        self.log_message(f"'{module}' reloaded: {result.summary()}")
         self.evt_pyfile.emit(module)
+        self.evt_reloaded.emit(result)
+        return result
 
     def _reload_qss(self, path: str) -> None:
         self.evt_stylesheet.emit()
         self.log_message(f"'{Path(path).name}' changed")
 
-    def log_message(self, msg: str) -> None:
-        """Timestamp `msg` and pass it to the logger and `log_func`."""
+    def log_message(self, msg: str, level: int = logging.INFO) -> None:
+        """Timestamp `msg` and pass it to the logger, `log_func`, `messages` and `evt_message`."""
         msg = f"{datetime.now().strftime(TIME_FMT)} - {msg}"
         logger.debug(msg)
+        self._messages.append((msg, level))
         if self.log_func is not None:
             self.log_func(msg)
+        self.evt_message.emit(msg, level)

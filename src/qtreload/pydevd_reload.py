@@ -158,9 +158,14 @@ def notify_error(*args):
 # =======================================================================================================================
 def code_objects_equal(code0, code1):
     for d in dir(code0):
-        if d.startswith("_") or "line" in d or d in ("replace", "co_positions", "co_qualname"):
+        # co_lnotab is deprecated (and derived from line information, which is ignored anyway)
+        if d.startswith("_") or "line" in d or d in ("replace", "co_positions", "co_qualname", "co_lnotab"):
             continue
-        if getattr(code0, d) != getattr(code1, d):
+        value0 = getattr(code0, d)
+        # methods (e.g. co_branches in Python 3.14) never compare equal between two code objects
+        if callable(value0):
+            continue
+        if value0 != getattr(code1, d):
             return False
     return True
 
@@ -218,6 +223,10 @@ class Reload:
         self.found_change = False
         # problems that did not stop the reload (e.g. attributes that could not be updated)
         self.warnings = []
+        # names added to the module or its classes (e.g. 'new_function', 'MyClass.new_method')
+        self.added = []
+        # functions and methods whose code changed (e.g. 'function', 'MyClass.method')
+        self.updated = []
         # exception raised while executing the new module code, if any
         self.error = None
 
@@ -269,6 +278,7 @@ class Reload:
             for name in newnames - oldnames:
                 notify_info0("Added:", name, "to namespace")
                 self.found_change = True
+                self.added.append(name)
                 modns[name] = new_namespace[name]
 
             # Update in-place what we can
@@ -401,6 +411,7 @@ class Reload:
             notify_info0("Updated function code:", oldfunc)
             setattr(oldfunc, attr_name, new_code)
             self.found_change = True
+            self.updated.append(getattr(oldfunc, "__qualname__", repr(oldfunc)))
 
         try:
             oldfunc.__defaults__ = newfunc.__defaults__
@@ -430,6 +441,7 @@ class Reload:
             setattr(oldclass, name, newdict[name])
             notify_info0("Added:", name, "to", oldclass)
             self.found_change = True
+            self.added.append(f"{getattr(oldclass, '__qualname__', oldclass)}.{name}")
 
         # Note: not removing old things...
         # for name in oldnames - newnames:

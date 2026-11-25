@@ -314,3 +314,82 @@ def test_stylesheet_signal_once_per_batch(qtbot, make_reloader, make_package):
     qtbot.wait(50)
     assert emitted == [True]
     assert any("'one.qss', 'two.qss' changed" in msg for msg in messages)
+
+
+def test_reload_result_summary():
+    from qtreload.reloader import ReloadResult
+
+    assert ReloadResult("m", "m.py").summary() == "no changes"
+    result = ReloadResult("m", "m.py", changed=True, updated=("a", "b", "c"), added=("x",))
+    assert result.ok
+    assert result.summary() == "updated a, b, c; added x"
+    assert result.summary(max_names=2) == "updated a, b (+1 more); added x"
+    failed = ReloadResult("m", "m.py", error=ValueError("boom"))
+    assert not failed.ok
+    assert failed.summary() == "ValueError: boom"
+
+
+def test_reload_result_signals(qtbot, make_reloader, make_package):
+    name, root = make_package({"a.py": "def value():\n    return 1\n"})
+    importlib.import_module(f"{name}.a")
+    reloader = make_reloader([name])
+    failed = []
+    reloader.evt_reload_failed.connect(failed.append)
+    path = str(root / "a.py")
+
+    reloaded, pyfiles = [], []
+    reloader.evt_reloaded.connect(reloaded.append)
+    reloader.evt_pyfile.connect(pyfiles.append)
+
+    (root / "a.py").write_text("def value():\n    return 2\n\ndef extra():\n    return 3\n")
+    result = reloader.reload_path(path)
+    assert reloaded == [result]
+    assert pyfiles == [f"{name}.a"]
+    assert result.module == f"{name}.a"
+    assert result.path == path
+    assert result.ok
+    assert result.changed
+    assert result.updated == ("value",)
+    assert result.added == ("extra",)
+    assert result.traceback == ""
+    assert failed == []
+
+    (root / "a.py").write_text("def value(:\n")
+    with qtbot.waitSignal(reloader.evt_reload_failed) as blocker, qtbot.assertNotEmitted(reloader.evt_reloaded):
+        result = reloader.reload_path(path)
+    assert blocker.args == [result]
+    assert not result.ok
+    assert isinstance(result.error, SyntaxError)
+    assert "SyntaxError" in result.traceback
+    assert not result.changed
+
+
+def test_reload_path_without_result(make_reloader, make_package):
+    name, root = make_package({"a.py": "", "style.qss": ""})
+    reloader = make_reloader([name])
+    assert reloader.reload_path(str(root / "a.py")) is None, "Module was never imported"
+    assert reloader.reload_path(str(root / "style.qss")) is None
+
+
+def test_messages_have_levels(qtbot, make_reloader, make_package, monkeypatch):
+    import logging
+
+    from qtreload import reloader as reloader_module
+
+    name, root = make_package({"a.py": "def value():\n    return 1\n"})
+    importlib.import_module(f"{name}.a")
+    reloader = make_reloader([name, "not_a_module_qtreload"])
+    assert any("Could not find path" in msg and level == logging.WARNING for msg, level in reloader.messages)
+    assert any("Watching for" in msg and level == logging.INFO for msg, level in reloader.messages)
+
+    (root / "a.py").write_text("def value(:\n")
+    with qtbot.waitSignal(reloader.evt_message) as blocker:
+        reloader.reload_path(str(root / "a.py"))
+    assert "SyntaxError" in blocker.args[0]
+    assert blocker.args[1] == logging.ERROR
+    assert reloader.messages[-1] == tuple(blocker.args)
+
+    for i in range(reloader_module.MAX_MESSAGES + 5):
+        reloader.log_message(f"message {i}")
+    assert len(reloader.messages) == reloader_module.MAX_MESSAGES
+    assert reloader.messages[-1][0].endswith(f"message {reloader_module.MAX_MESSAGES + 4}")

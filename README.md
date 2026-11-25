@@ -90,6 +90,9 @@ from qtreload import HotReloader
 reloader = HotReloader(["napari", "napari_plugin"], parent=app)
 reloader.evt_pyfile.connect(lambda module: print(f"reloaded {module}"))
 reloader.evt_stylesheet.connect(apply_my_stylesheet)
+# detailed outcome: ReloadResult with .updated, .added, .warnings, .error and .traceback
+reloader.evt_reloaded.connect(lambda result: print(result.summary()))
+reloader.evt_reload_failed.connect(lambda result: print(result.traceback))
 
 # change what is watched at any time
 reloader.add_module("another_module")

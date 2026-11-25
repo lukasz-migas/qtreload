@@ -1,3 +1,4 @@
+import logging
 import os
 
 from qtreload.utilities import path_to_module
@@ -137,3 +138,37 @@ def test_widget_add_module_on_return_only(qtbot, make_package):
     widget._add_module_text.returnPressed.emit()
     assert widget.reloader.modules == (name,)
     assert widget._add_module_text.text() == ""
+
+
+def test_widget_status_and_colored_log(qtbot, make_package):
+    """Test the status line shows the last reload and errors are colored in the log."""
+    import importlib
+
+    from qtreload.qt_reload import LEVEL_COLORS, SUCCESS_COLOR
+
+    name, root = make_package({"a.py": "def value():\n    return 1\n"})
+    importlib.import_module(f"{name}.a")
+    messages = []
+    widget = _make_widget(qtbot, [name], messages)
+    assert "Watching for" in widget._log_edit.toPlainText(), "Setup messages should be shown"
+    assert widget._status_label.text() == "No reloads yet"
+
+    (root / "a.py").write_text("def value():\n    return 2\n")
+    widget.reloader.reload_path(str(root / "a.py"))
+    assert widget._status_label.text() == f"Reloaded '{name}.a': updated value"
+    assert SUCCESS_COLOR in widget._status_label.styleSheet()
+
+    (root / "a.py").write_text("def value(:\n")
+    widget.reloader.reload_path(str(root / "a.py"))
+    assert widget._status_label.text().startswith(f"Failed to reload '{name}.a': SyntaxError")
+    assert "Traceback" in widget._status_label.toolTip()
+    assert LEVEL_COLORS[logging.ERROR] in widget._log_edit.toHtml()
+
+    widget.log_message("<class 'int'> & more")
+    assert "<class 'int'> & more" in widget._log_edit.toPlainText()
+    assert any("<class 'int'>" in msg for msg in messages), "log_func should receive messages"
+
+    collected = []
+    widget.log_func = collected.append
+    widget.log_message("after")
+    assert collected and collected[0].endswith("after")

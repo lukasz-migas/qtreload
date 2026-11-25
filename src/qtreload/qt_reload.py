@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+import logging
 import typing as ty
 from contextlib import suppress
 from pathlib import Path
@@ -25,13 +27,19 @@ from qtpy.QtWidgets import (
 )
 
 from qtreload.reloader import (
+    MAX_MESSAGES,
     PY_IGNORE_PATTERN,
     PY_PATTERN,
     RELOAD_DELAY_MS,
     STYLESHEET_PATTERN,
     TIME_FMT,
     HotReloader,
+    ReloadResult,
 )
+
+# colors of log messages and the status line - readable on both light and dark backgrounds
+LEVEL_COLORS = {logging.WARNING: "#e69500", logging.ERROR: "#d9534f"}
+SUCCESS_COLOR = "#3c9d3c"
 
 __all__ = [
     "PY_IGNORE_PATTERN",
@@ -76,7 +84,6 @@ class QtReloadWidget(QWidget):
         log_func: ty.Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(parent=parent)
-        self.log_func = log_func
         self.widgets: list[QWidget] = []
 
         self._add_module_text = QLineEdit(self)
@@ -134,6 +141,11 @@ class QtReloadWidget(QWidget):
 
         self._log_edit = QTextEdit(self)
         self._log_edit.setReadOnly(True)
+        self._log_edit.document().setMaximumBlockCount(MAX_MESSAGES)
+
+        self._status_label = QLabel("No reloads yet", self)
+        self._status_label.setWordWrap(True)
+        self._status_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         self._file_filter = QLineEdit(self)
         self._file_filter.setPlaceholderText("Filter files...")
@@ -185,7 +197,11 @@ class QtReloadWidget(QWidget):
         main_layout.setSpacing(2)
         main_layout.setContentsMargins(6, 6, 6, 6)
         main_layout.addLayout(layout)
-        main_layout.addWidget(tabs, stretch=True)
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(2)
+        right_layout.addWidget(self._status_label)
+        right_layout.addWidget(tabs, stretch=True)
+        main_layout.addLayout(right_layout, stretch=True)
 
         self.reloader = HotReloader(
             modules,
@@ -194,14 +210,29 @@ class QtReloadWidget(QWidget):
             py_pattern=py_pattern,
             ignore_py_pattern=ignore_py_pattern,
             stylesheet_pattern=stylesheet_pattern,
-            log_func=self._on_log,
+            log_func=log_func,
         )
         self.reloader.evt_pyfile.connect(self.evt_pyfile)
         self.reloader.evt_stylesheet.connect(self.evt_stylesheet)
+        self.reloader.evt_reloaded.connect(self._on_reload_result)
+        self.reloader.evt_reload_failed.connect(self._on_reload_result)
+        # show what was logged while the reloader was set up, then follow new messages
+        for msg, level in self.reloader.messages:
+            self._on_message(msg, level)
+        self.reloader.evt_message.connect(self._on_message)
         self.reloader.evt_watchlist_changed.connect(self._on_watchlist_changed)
         self._on_watchlist_changed()
 
     # Reloader state, kept for backwards compatibility
+
+    @property
+    def log_func(self) -> ty.Callable[[str], None] | None:
+        """Function called with every log message."""
+        return self.reloader.log_func
+
+    @log_func.setter
+    def log_func(self, value: ty.Callable[[str], None] | None) -> None:
+        self.reloader.log_func = value
 
     @property
     def py_pattern(self) -> tuple[str, ...]:
@@ -255,9 +286,9 @@ class QtReloadWidget(QWidget):
         """Queue `path` for reloading once file changes settle."""
         self.reloader.on_reload_file(path)
 
-    def log_message(self, msg: str) -> None:
+    def log_message(self, msg: str, level: int = logging.INFO) -> None:
         """Log message."""
-        self.reloader.log_message(msg)
+        self.reloader.log_message(msg, level)
 
     # UI
 
@@ -265,12 +296,20 @@ class QtReloadWidget(QWidget):
         """Register a QWidget as a child widget."""
         self.widgets.append(widget)
 
-    def _on_log(self, msg: str) -> None:
-        """Show a log message from the reloader."""
+    def _on_message(self, msg: str, level: int) -> None:
+        """Show a log message from the reloader, colored by its level."""
+        color = LEVEL_COLORS.get(level)
+        style = f' style="color: {color}"' if color else ""
         with suppress(RuntimeError):
-            self._log_edit.append(msg)
-        if self.log_func is not None:
-            self.log_func(msg)
+            self._log_edit.append(f"<span{style}>{html.escape(msg)}</span>")
+
+    def _on_reload_result(self, result: ReloadResult) -> None:
+        """Show the outcome of the last reload."""
+        status = "Reloaded" if result.ok else "Failed to reload"
+        color = SUCCESS_COLOR if result.ok else LEVEL_COLORS[logging.ERROR]
+        self._status_label.setText(f"{status} '{result.module}': {result.summary()}")
+        self._status_label.setStyleSheet(f"color: {color};")
+        self._status_label.setToolTip(result.traceback or result.summary(max_names=50))
 
     def _on_watchlist_changed(self) -> None:
         """Show the reloader's modules, patterns and files."""
