@@ -37,7 +37,11 @@ def install_hot_reload(parent: QWidget | None = None, settings_key: str | None =
     config = load_config()
     if _reload_ref is None:
         _reload_ref = QtReloadWidget(
-            config.modules, parent=parent, settings_key=settings_key, **config.reloader_kwargs()
+            config.modules,
+            parent=parent,
+            settings_key=settings_key,
+            editor=config.editor,
+            **config.reloader_kwargs(),
         )
     else:
         _reload_ref.reloader.py_pattern = config.py_pattern

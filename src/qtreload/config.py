@@ -24,6 +24,7 @@ ENV_VARIABLES = {
     "ignore_py_pattern": "QTRELOAD_IGNORE_PY_PATTERN",
     "stylesheet_pattern": "QTRELOAD_STYLESHEET_PATTERN",
     "delay_ms": "QTRELOAD_DELAY_MS",
+    "editor": "QTRELOAD_EDITOR",
 }
 
 
@@ -43,6 +44,9 @@ class ReloadConfig:
         Glob patterns of stylesheet files to watch.
     delay_ms : int
         Changes are reloaded once no new change was seen for this many milliseconds.
+    editor : str, optional
+        Command used to open source files, with `{path}` and `{line}` placeholders, e.g.
+        "pycharm --line {line} {path}" or "code -g {path}:{line}".
     """
 
     modules: tuple[str, ...] = ()
@@ -50,6 +54,7 @@ class ReloadConfig:
     ignore_py_pattern: tuple[str, ...] = PY_IGNORE_PATTERN
     stylesheet_pattern: tuple[str, ...] = STYLESHEET_PATTERN
     delay_ms: int = RELOAD_DELAY_MS
+    editor: str | None = None
 
     def reloader_kwargs(self) -> dict[str, ty.Any]:
         """Keyword arguments of `HotReloader` (and `QtReloadWidget`) other than the modules."""
@@ -112,7 +117,7 @@ def _read_pyproject(path: Path) -> dict[str, ty.Any]:
 def _parse_table(table: ty.Any, path: Path) -> dict[str, ty.Any]:
     """Validate the [tool.qtreload] table."""
     if not isinstance(table, dict):
-        raise ValueError(f"[tool.qtreload] in '{path}' must be a table.")  # noqa: TRY004 - all config errors are ValueError
+        raise ValueError(f"[tool.qtreload] in '{path}' must be a table.")  # - all config errors are ValueError
     known = {field.name for field in fields(ReloadConfig)}
     values: dict[str, ty.Any] = {}
     for key, value in table.items():
@@ -124,6 +129,10 @@ def _parse_table(table: ty.Any, path: Path) -> dict[str, ty.Any]:
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError(f"'delay_ms' in [tool.qtreload] of '{path}' must be a non-negative integer.")
             values[key] = value
+        elif key == "editor":
+            if not isinstance(value, str):
+                raise ValueError(f"'editor' in [tool.qtreload] of '{path}' must be a string.")
+            values[key] = value or None
         else:
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
                 raise ValueError(f"'{key}' in [tool.qtreload] of '{path}' must be a list of strings.")
@@ -145,6 +154,8 @@ def _parse_environ(environ: ty.Mapping[str, str]) -> dict[str, ty.Any]:
                 raise ValueError(f"{variable} must be a non-negative integer, got '{raw}'.") from e
             if values[key] < 0:
                 raise ValueError(f"{variable} must be a non-negative integer, got '{raw}'.")
+        elif key == "editor":
+            values[key] = raw.strip() or None
         else:
             values[key] = _unique(raw.split(","))
     return values

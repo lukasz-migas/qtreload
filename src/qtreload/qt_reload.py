@@ -8,7 +8,7 @@ import typing as ty
 from contextlib import suppress
 from pathlib import Path
 
-from qtpy.QtCore import QModelIndex, Qt, Signal
+from qtpy.QtCore import QModelIndex, QPoint, Qt, Signal
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -19,6 +19,8 @@ from qtpy.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMainWindow,
+    QMenu,
+    QPlainTextEdit,
     QPushButton,
     QTabWidget,
     QTextEdit,
@@ -26,6 +28,8 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from qtreload.inspector import WidgetInspector, describe_widget, open_in_editor
+from qtreload.live import is_alive
 from qtreload.reloader import (
     MAX_MESSAGES,
     PY_IGNORE_PATTERN,
@@ -86,6 +90,7 @@ class QtReloadWidget(QWidget):
         *,
         delay_ms: int = RELOAD_DELAY_MS,
         settings_key: str | None = None,
+        editor: str | None = None,
     ) -> None:
         super().__init__(parent=parent)
         self.widgets: list[QWidget] = []
@@ -170,6 +175,41 @@ class QtReloadWidget(QWidget):
 
         self._files_list = QListWidget(self)
         self._files_list.doubleClicked.connect(self.on_double_click)
+        self._files_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._files_list.customContextMenuRequested.connect(self._on_files_context_menu)
+
+        # command used to open files, see `open_in_editor`
+        self.editor = editor
+        self._selected_widget: QWidget | None = None
+        self.inspector = WidgetInspector(self, exclude=self)
+        self.inspector.evt_hovered.connect(self._show_widget_info)
+        self.inspector.evt_selected.connect(self._on_widget_selected)
+        self.inspector.evt_active_changed.connect(self._on_inspector_active_changed)
+
+        self._pick_btn = QPushButton("Pick widget")
+        self._pick_btn.setCheckable(True)
+        self._pick_btn.setToolTip("Hover over a widget of the application and click it to inspect it. Escape cancels.")
+        self._pick_btn.toggled.connect(self.on_toggle_pick)
+        self._parent_btn = QPushButton("Select parent")
+        self._parent_btn.setToolTip("Inspect the parent of the selected widget.")
+        self._parent_btn.clicked.connect(self.on_select_parent)
+        self._open_source_btn = QPushButton("Open source")
+        self._open_source_btn.setToolTip("Open the file defining the class of the selected widget in your editor.")
+        self._open_source_btn.clicked.connect(self.on_open_source)
+        self._widget_info = QPlainTextEdit(self)
+        self._widget_info.setReadOnly(True)
+        self._widget_info.setPlaceholderText("Press 'Pick widget' and click a widget of the application.")
+
+        inspector_tab = QWidget()
+        inspector_btn_layout = QHBoxLayout()
+        inspector_btn_layout.setSpacing(2)
+        inspector_btn_layout.addWidget(self._pick_btn)
+        inspector_btn_layout.addWidget(self._parent_btn)
+        inspector_btn_layout.addWidget(self._open_source_btn)
+        inspector_layout = QVBoxLayout(inspector_tab)
+        inspector_layout.addLayout(inspector_btn_layout)
+        inspector_layout.addWidget(self._widget_info, stretch=True)
+        self._update_inspector_buttons()
 
         files_tab = QWidget()
         files_layout = QVBoxLayout(files_tab)
@@ -179,6 +219,7 @@ class QtReloadWidget(QWidget):
         tabs = QTabWidget(self)
         tabs.addTab(self._log_edit, "Log")
         tabs.addTab(files_tab, "Files")
+        tabs.addTab(inspector_tab, "Inspector")
 
         add_btn_layout = QHBoxLayout()
         add_btn_layout.setSpacing(2)
@@ -344,6 +385,81 @@ class QtReloadWidget(QWidget):
         self._py_pattern_text.setText(", ".join(self.reloader.py_pattern))
         self._py_ignore_pattern_text.setText(", ".join(self.reloader.ignore_py_pattern))
         self._stylesheet_pattern_text.setText(", ".join(self.reloader.stylesheet_pattern))
+
+    # Inspector
+
+    @property
+    def selected_widget(self) -> QWidget | None:
+        """The widget selected in the inspector."""
+        if self._selected_widget is not None and not is_alive(self._selected_widget):
+            self._selected_widget = None
+        return self._selected_widget
+
+    def on_toggle_pick(self, checked: bool) -> None:
+        """Start or stop picking a widget."""
+        if checked:
+            self.inspector.start()
+        else:
+            self.inspector.stop()
+
+    def inspect_widget(self, widget: QWidget) -> None:
+        """Select `widget` in the inspector."""
+        self.inspector.select(widget)
+
+    def on_select_parent(self) -> None:
+        """Select the parent of the selected widget."""
+        widget = self.selected_widget
+        if widget is not None and widget.parentWidget() is not None:
+            self.inspect_widget(widget.parentWidget())
+
+    def on_open_source(self) -> None:
+        """Open the source of the selected widget's class."""
+        widget = self.selected_widget
+        if widget is None:
+            return
+        info = describe_widget(widget)
+        if info.source_file is None:
+            self.log_message(f"No python source found for '{info.class_name}'", logging.WARNING)
+            return
+        self.open_file(info.source_file, info.source_line)
+
+    def open_file(self, path: str, line: int | None = None) -> bool:
+        """Open `path` in the configured editor (see `open_in_editor`)."""
+        opened = open_in_editor(path, line, self.editor)
+        if not opened:
+            self.log_message(f"Could not open '{path}' in an editor", logging.WARNING)
+        return opened
+
+    def _on_widget_selected(self, widget: QWidget) -> None:
+        self._selected_widget = widget
+        self._show_widget_info(widget)
+        self._update_inspector_buttons()
+
+    def _show_widget_info(self, widget: QWidget) -> None:
+        if is_alive(widget):
+            self._widget_info.setPlainText(describe_widget(widget).format())
+
+    def _on_inspector_active_changed(self, active: bool) -> None:
+        self._pick_btn.blockSignals(True)
+        self._pick_btn.setChecked(active)
+        self._pick_btn.blockSignals(False)
+        if not active and self.selected_widget is not None:
+            self._show_widget_info(self.selected_widget)
+
+    def _update_inspector_buttons(self) -> None:
+        widget = self.selected_widget
+        self._parent_btn.setEnabled(widget is not None and widget.parentWidget() is not None)
+        self._open_source_btn.setEnabled(widget is not None and describe_widget(widget).source_file is not None)
+
+    def _on_files_context_menu(self, pos: QPoint) -> None:
+        item = self._files_list.itemAt(pos)
+        if item is None:
+            return
+        path = item.text()
+        menu = QMenu(self)
+        menu.addAction("Reload", lambda: self.reloader.reload_path(path))
+        menu.addAction("Open in editor", lambda: self.open_file(path))
+        menu.exec(self._files_list.viewport().mapToGlobal(pos))
 
     def on_double_click(self, index: QModelIndex) -> None:
         """Reload the selected file."""

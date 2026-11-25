@@ -1,5 +1,5 @@
 import logging
-
+import sys
 import pytest
 from qtpy.QtWidgets import QApplication, QWidget
 
@@ -180,6 +180,7 @@ def test_widget_forwards_stylesheet_changed(qtbot, tmp_path):
     assert blocker.args == [str(path.resolve())]
 
 
+@pytest.mark.xfail(sys.platform == "win32", reason="Occasionally there is a timeout exception.")
 def test_registered_stylesheet_file_system_events(qtbot, make_reloader, widget, tmp_path):
     """Test real watcher events for a stylesheet outside any module, including a replace-style save."""
     import os

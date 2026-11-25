@@ -41,6 +41,24 @@ pip install qtreload
 
 ## Usage
 
+### Without changing your application
+
+Run your application through `qtreload` to get hot reloading without touching its code:
+
+```bash
+python -m qtreload --watch myapp,myplugin my_app.py --app-argument
+python -m qtreload -m myapp.main            # watches the 'myapp' package by default
+qtreload --show --settings-key myapp my_app.py
+```
+
+The developer tools window opens with `Ctrl+Shift+F12` (`Cmd+Shift+F12` on macOS) from any window of the application
+(change it with `--shortcut`). Without `--watch`, the modules come from `[tool.qtreload]` in `pyproject.toml` or the
+`QTRELOAD_*` environment variables (see Configuration), or the package of the module run with `-m`. Hot reloading
+starts when the application starts its event loop (`app.exec()`). If it never does (e.g. in an interactive session),
+call `install_dev_tools()` yourself once the `QApplication` exists - it does the same as the command line.
+
+### In your application code
+
 You can instantiate the `QtReloadWidget` manually or using the `install_hot_reload` function.
 
 Note! Make sure to instantiate QApplication before running this code.
@@ -165,6 +183,18 @@ live.evt_rebuilt.connect(lambda widget: widget.evt_changed.connect(on_changed))
 The widget is rebuilt once per batch of changes, not when its modules failed to reload, and not if it was deleted in the
 meantime (e.g. a dialog that was closed). While the factory runs, `live.widget` is still the old instance, so you can
 copy its state to the new one.
+
+### Inspecting widgets
+
+The "Inspector" tab of the widget answers "which class draws this, and where is its code?". Press "Pick widget", hover
+over your application (the widget under the cursor gets a red frame) and click a widget - the click selects it without
+triggering it, Escape cancels. The tab shows the class, module, source file and line, object name, geometry, parents
+and stylesheet. "Select parent" walks up the hierarchy and "Open source" opens the class in your editor.
+
+Files can also be opened from the "Files" tab (right click). Set the editor command with `{path}` and `{line}`
+placeholders in `[tool.qtreload] editor`, the `QTRELOAD_EDITOR` environment variable or `QtReloadWidget(editor=...)`,
+e.g. `pycharm --line {line} {path}` or `code -g {path}:{line}`. Without one, files open in the application associated
+with their type. The same tools are available as `WidgetInspector`, `describe_widget` and `open_in_editor`.
 
 ## When it works like magic
 

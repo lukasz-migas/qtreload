@@ -566,7 +566,7 @@ class Reload:
             try:
                 if old_members[name].value != new_members[name].value:
                     changed.append(name)
-            except Exception:  # noqa: BLE001 - values that cannot be compared are assumed to be unchanged
+            except Exception:  # - values that cannot be compared are assumed to be unchanged
                 pass
         if added or removed or changed:
             details = ", ".join(

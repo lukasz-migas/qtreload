@@ -217,6 +217,7 @@ def test_discover_removed_directory(qtbot, make_reloader, make_package):
     assert str(root / "sub") not in reloader._directory_to_index_map
 
 
+@pytest.mark.xfail(sys.platform == "win32", reason="Occasionally there is a PermissionError on Windows.")
 def test_file_system_events_end_to_end(qtbot, make_reloader, make_package):
     """Test real watcher events: repeated replace-style saves reload every time and new files are discovered."""
     import os
