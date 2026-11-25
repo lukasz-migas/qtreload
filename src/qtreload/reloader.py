@@ -7,6 +7,7 @@ import logging
 import sys
 import traceback
 import typing as ty
+import weakref
 from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass
@@ -14,10 +15,16 @@ from datetime import datetime
 from pathlib import Path
 
 from natsort import natsorted
-from qtpy.QtCore import QFileSystemWatcher, QObject, QTimer, Signal
+from qtpy.QtCore import QCoreApplication, QFileSystemWatcher, QObject, QTimer, Signal
 
 from qtreload.pydevd_reload import Reload
-from qtreload.utilities import get_import_path, get_imported_modules, get_module_paths, path_to_module
+from qtreload.utilities import (
+    get_import_path,
+    get_imported_modules,
+    get_module_paths,
+    path_to_module,
+    render_stylesheet,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +43,24 @@ STYLESHEET_PATTERN = ("**/*.qss",)
 IGNORE_DIRECTORIES = ("__pycache__",)
 # number of recent log messages kept in `HotReloader.messages`
 MAX_MESSAGES = 1000
+
+
+# values of stylesheet template variables, or a function returning them (e.g. the colors of the current theme)
+StylesheetVariables = ty.Mapping[str, object] | ty.Callable[[], ty.Mapping[str, object]]
+
+
+class Stylable(ty.Protocol):
+    """Anything a stylesheet can be applied to, e.g. QApplication or QWidget."""
+
+    def setStyleSheet(self, stylesheet: str) -> None:
+        """Set the stylesheet."""
+
+
+@dataclass
+class _StylesheetRegistration:
+    path: str
+    target: weakref.ref[Stylable]
+    variables: StylesheetVariables | None
 
 
 @dataclass(frozen=True)
@@ -125,6 +150,8 @@ class HotReloader(QObject):
     evt_message = Signal(str, int)
     # emitted when a stylesheet changed or a stylesheet reload was requested
     evt_stylesheet = Signal()
+    # emitted with the path of every stylesheet that changed
+    evt_stylesheet_changed = Signal(str)
     # emitted after the watched modules, patterns or files were updated
     evt_watchlist_changed = Signal()
 
@@ -142,6 +169,7 @@ class HotReloader(QObject):
         super().__init__(parent)
         self.log_func = log_func
         self._messages: deque[tuple[str, int]] = deque(maxlen=MAX_MESSAGES)
+        self._stylesheets: list[_StylesheetRegistration] = []
         self.py_pattern = py_pattern
         self.ignore_py_pattern = ignore_py_pattern
         self.stylesheet_pattern = stylesheet_pattern
@@ -182,8 +210,118 @@ class HotReloader(QObject):
 
     @property
     def files(self) -> list[str]:
-        """Discovered python and stylesheet files, sorted."""
-        return natsorted(self.path_to_index_map)
+        """Discovered python and stylesheet files and registered stylesheets, sorted."""
+        return natsorted(set(self.path_to_index_map) | set(self.stylesheets))
+
+    @property
+    def stylesheets(self) -> list[str]:
+        """Paths of the stylesheets registered with `register_stylesheet`, in registration order."""
+        return list(dict.fromkeys(registration.path for registration in self._stylesheets))
+
+    # Stylesheets
+
+    def register_stylesheet(
+        self,
+        path: str | Path,
+        target: Stylable | None = None,
+        variables: StylesheetVariables | None = None,
+    ) -> None:
+        """Apply the stylesheet at `path` to `target` now and every time the file changes.
+
+        Parameters
+        ----------
+        path : str | Path
+            Stylesheet file. It does not have to belong to a watched module.
+        target : QApplication | QWidget, optional
+            Object to apply the stylesheet to, the QApplication if not given. It is not kept alive by the reloader.
+            When several stylesheets are registered for the same target, they are joined in registration order.
+        variables : Mapping[str, object] | Callable[[], Mapping[str, object]], optional
+            Values of `{{ name }}` placeholders in the stylesheet, or a function returning them (called each time
+            the stylesheet is applied). Placeholders are left unchanged if not given.
+        """
+        resolved = str(Path(path).resolve())
+        if not Path(resolved).is_file():
+            raise FileNotFoundError(f"Stylesheet '{path}' does not exist.")
+        if target is None:
+            target = ty.cast("Stylable | None", QCoreApplication.instance())
+            if target is None:
+                raise RuntimeError("Create a QApplication before registering a stylesheet without a target.")
+
+        for registration in self._stylesheets:
+            if registration.path == resolved and registration.target() is target:
+                registration.variables = variables
+                break
+        else:
+            self._stylesheets.append(_StylesheetRegistration(resolved, weakref.ref(target), variables))
+        if resolved not in self._watcher.files():
+            self._watcher.addPath(resolved)
+        self.log_message(f"Registered stylesheet '{Path(resolved).name}'")
+        self._apply_stylesheets([resolved])
+        self.evt_watchlist_changed.emit()
+
+    def unregister_stylesheet(self, path: str | Path, target: Stylable | None = None) -> None:
+        """Stop applying the stylesheet at `path` to `target` (to all targets if not given).
+
+        The stylesheet currently set on the target is not changed.
+        """
+        resolved = str(Path(path).resolve())
+        self._stylesheets = [
+            registration
+            for registration in self._stylesheets
+            if not (registration.path == resolved and (target is None or registration.target() is target))
+        ]
+        still_needed = resolved in self.path_to_index_map or resolved in self.stylesheets
+        if not still_needed and resolved in self._watcher.files():
+            self._watcher.removePath(resolved)
+        self.evt_watchlist_changed.emit()
+
+    def apply_stylesheets(self) -> None:
+        """Re-read and re-apply all registered stylesheets, e.g. after changing their variables."""
+        self._apply_stylesheets()
+
+    def _apply_stylesheets(self, paths: ty.Iterable[str] | None = None) -> None:
+        """Re-apply the registered stylesheets of targets that use any of `paths` (all targets if None)."""
+        self._stylesheets = [registration for registration in self._stylesheets if registration.target() is not None]
+        selected = None if paths is None else set(paths)
+        targets: list[Stylable] = []
+        for registration in self._stylesheets:
+            target = registration.target()
+            if target is None or (selected is not None and registration.path not in selected):
+                continue
+            if not any(target is existing for existing in targets):
+                targets.append(target)
+
+        for target in targets:
+            parts = []
+            for registration in self._stylesheets:
+                if registration.target() is target:
+                    text = self._render_stylesheet(registration)
+                    if text is None:
+                        break
+                    parts.append(text)
+            else:
+                try:
+                    target.setStyleSheet("\n".join(parts))
+                except RuntimeError:  # the Qt object was deleted
+                    self._stylesheets = [r for r in self._stylesheets if r.target() is not target]
+
+    def _render_stylesheet(self, registration: _StylesheetRegistration) -> str | None:
+        """Read a registered stylesheet and fill in its variables. Returns None if the file cannot be read."""
+        name = Path(registration.path).name
+        try:
+            text = Path(registration.path).read_text(encoding="utf-8")
+        except OSError as e:
+            self.log_message(f"Could not read stylesheet '{name}': {e}", logging.ERROR)
+            return None
+        if registration.variables is None:
+            return text
+        variables = registration.variables() if callable(registration.variables) else registration.variables
+        text, missing = render_stylesheet(text, variables)
+        if missing:
+            self.log_message(
+                f"Stylesheet '{name}' uses unknown variables: {', '.join(sorted(missing))}", logging.WARNING
+            )
+        return text
 
     # Watch list management
 
@@ -294,6 +432,8 @@ class HotReloader(QObject):
             all_directories += directories
             for directory in directories:
                 directory_mapping[directory] = i
+        # registered stylesheets stay watched, even when they do not belong to a module
+        all_paths += [path for path in self.stylesheets if path not in mapping]
         self.log_message(f"Added {len(all_paths)} files and {len(set(all_directories))} directories to watcher")
         if all_paths:
             self._watcher.addPaths(all_paths)
@@ -419,8 +559,9 @@ class HotReloader(QObject):
         self._pending_paths.clear()
         watched = set(self._watcher.files())
         to_reload: list[str] = []
+        registered = set(self.stylesheets)
         for path in paths:
-            if path not in self.path_to_index_map:
+            if path not in self.path_to_index_map and path not in registered:
                 # module was removed from the watch list while the change was pending
                 continue
             if not Path(path).exists():
@@ -433,13 +574,22 @@ class HotReloader(QObject):
         self._reload_batch(to_reload)
 
     def _reload_batch(self, paths: list[str]) -> None:
-        """Reload python files in import order, then signal stylesheet changes once."""
-        for path in self._order_by_imports([path for path in paths if path.endswith(".py")]):
+        """Reload python files in import order, then stylesheets."""
+        registered = set(self.stylesheets)
+        python = [path for path in paths if path.endswith(".py") and path not in registered]
+        for path in self._order_by_imports(python):
             self._reload_py(path)
-        stylesheets = [path for path in paths if path.endswith(".qss")]
+        stylesheets = [path for path in paths if path.endswith(".qss") or path in registered]
         if stylesheets:
-            self.log_message(f"{', '.join(repr(Path(path).name) for path in stylesheets)} changed")
-            self.evt_stylesheet.emit()
+            self._reload_stylesheets(stylesheets)
+
+    def _reload_stylesheets(self, paths: list[str]) -> None:
+        """Re-apply registered stylesheets among `paths` and signal the change (`evt_stylesheet` only once)."""
+        self.log_message(f"{', '.join(repr(Path(path).name) for path in paths)} changed")
+        self._apply_stylesheets(paths)
+        for path in paths:
+            self.evt_stylesheet_changed.emit(path)
+        self.evt_stylesheet.emit()
 
     def _order_by_imports(self, paths: list[str]) -> list[str]:
         """Order python files so that each module is reloaded after the modules (from `paths`) it imports.
@@ -489,10 +639,11 @@ class HotReloader(QObject):
         Returns the result for python files, or None if the file is a stylesheet or its module was not reloaded
         (e.g. not imported yet).
         """
-        if path.endswith(".py"):
+        registered = path in self.stylesheets
+        if path.endswith(".py") and not registered:
             return self._reload_py(path)
-        if path.endswith(".qss"):
-            self._reload_qss(path)
+        if path.endswith(".qss") or registered:
+            self._reload_stylesheets([path])
         return None
 
     def reload_all_py(self) -> None:
@@ -501,8 +652,9 @@ class HotReloader(QObject):
             self._reload_py(path)
 
     def reload_stylesheets(self) -> None:
-        """Ask listeners to re-apply stylesheets."""
+        """Re-apply registered stylesheets and ask listeners to re-apply theirs."""
         self.log_message("Reloading all stylesheet files...")
+        self._apply_stylesheets()
         self.evt_stylesheet.emit()
 
     def _reload_py(self, path: str) -> ReloadResult | None:
@@ -538,10 +690,6 @@ class HotReloader(QObject):
         self.evt_pyfile.emit(module)
         self.evt_reloaded.emit(result)
         return result
-
-    def _reload_qss(self, path: str) -> None:
-        self.evt_stylesheet.emit()
-        self.log_message(f"'{Path(path).name}' changed")
 
     def log_message(self, msg: str, level: int = logging.INFO) -> None:
         """Timestamp `msg` and pass it to the logger, `log_func`, `messages` and `evt_message`."""

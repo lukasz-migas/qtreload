@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import re
 import sys
 import typing as ty
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 
 IS_WIN = sys.platform == "win32"
+# template variables in stylesheets, e.g. {{ primary_color }}
+STYLESHEET_VARIABLE_PATTERN = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 
 
 def noop(msg: str) -> None:
@@ -202,3 +205,20 @@ def get_imported_modules(path: str | Path, module: str) -> set[str]:
         parts = name.split(".")
         names.update(".".join(parts[:i]) for i in range(1, len(parts)))
     return names
+
+
+def render_stylesheet(text: str, variables: ty.Mapping[str, object]) -> tuple[str, set[str]]:
+    """Replace `{{ name }}` placeholders in a stylesheet with values from `variables`.
+
+    Returns the rendered stylesheet and the names of placeholders without a value, which are left unchanged.
+    """
+    missing: set[str] = set()
+
+    def _replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in variables:
+            missing.add(name)
+            return match.group(0)
+        return str(variables[name])
+
+    return STYLESHEET_VARIABLE_PATTERN.sub(_replace, text), missing

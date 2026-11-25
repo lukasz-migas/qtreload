@@ -72,6 +72,7 @@ class QtReloadWidget(QWidget):
 
     evt_pyfile = Signal(str)
     evt_stylesheet = Signal()
+    evt_stylesheet_changed = Signal(str)
 
     def __init__(
         self,
@@ -214,6 +215,7 @@ class QtReloadWidget(QWidget):
         )
         self.reloader.evt_pyfile.connect(self.evt_pyfile)
         self.reloader.evt_stylesheet.connect(self.evt_stylesheet)
+        self.reloader.evt_stylesheet_changed.connect(self.evt_stylesheet_changed)
         self.reloader.evt_reloaded.connect(self._on_reload_result)
         self.reloader.evt_reload_failed.connect(self._on_reload_result)
         # show what was logged while the reloader was set up, then follow new messages

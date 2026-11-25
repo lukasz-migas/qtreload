@@ -4,24 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from qtreload.reloader import HotReloader
-
-
-@pytest.fixture
-def make_reloader(qtbot):
-    """Create a HotReloader with a short reload delay."""
-    created = []
-
-    def _make(modules=(), messages=None, **kwargs):
-        reloader = HotReloader(
-            modules, log_func=messages.append if messages is not None else None, delay_ms=10, **kwargs
-        )
-        created.append(reloader)
-        return reloader
-
-    yield _make
-    for reloader in created:
-        reloader.deleteLater()
 
 
 def test_reloader_discovers_files(make_reloader, make_package):

@@ -30,3 +30,22 @@ def make_package(tmp_path, monkeypatch):
     for name in created:
         for module in [m for m in sys.modules if m == name or m.startswith(f"{name}.")]:
             del sys.modules[module]
+
+
+@pytest.fixture
+def make_reloader(qtbot):
+    """Create a HotReloader with a short reload delay."""
+    from qtreload.reloader import HotReloader
+
+    created = []
+
+    def _make(modules=(), messages=None, **kwargs):
+        reloader = HotReloader(
+            modules, log_func=messages.append if messages is not None else None, delay_ms=10, **kwargs
+        )
+        created.append(reloader)
+        return reloader
+
+    yield _make
+    for reloader in created:
+        reloader.deleteLater()

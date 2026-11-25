@@ -102,13 +102,30 @@ reloader.set_patterns(stylesheet_pattern=("**/*.qss", "**/*.css"))
 
 Keep a reference to it (or give it a parent) so it is not garbage collected.
 
+### Stylesheets
+
+Register a stylesheet to have it applied now and re-applied every time you save it. The file does not have to be
+part of a watched module, and several stylesheets registered for the same target are joined in registration order.
+QSS has no variables, so you can use `{{ name }}` placeholders and pass their values (or a function returning them,
+called every time the stylesheet is applied):
+
+```python
+reloader.register_stylesheet("styles/app.qss")  # applied to the QApplication
+reloader.register_stylesheet("styles/panel.qss", target=panel, variables=lambda: CURRENT_THEME)
+
+# after changing the theme
+reloader.apply_stylesheets()
+```
+
+`evt_stylesheet_changed(path)` is emitted for every changed stylesheet, and `evt_stylesheet()` once per batch of changes.
+
 ## When it works like magic
 
  There are countless examples where this approach really well. Some examples:
 
  - You are running your application where you have method `on_run` but when you execute this function, you notice that you misspelled some variable. In normal circumstances you would need to restart the application. Now, however, you can correct it in your IDE, save, and try running again.
  - You are running your application and are modifying the layout of a popup window. Now you can do this and each time the dialog is reshown, the new version of the dialog will be shown.
- - You are modifying a Qt style file (`*.qss`) and want to see the changes immediately (subscribe to `evt_stylesheet`)
+ - You are modifying a Qt style file (`*.qss`) and want to see the changes immediately (use `register_stylesheet` or subscribe to `evt_stylesheet`)
 
 ## Limitations
 
