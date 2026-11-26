@@ -15,7 +15,7 @@ write_to = "src/qtreload/_version.py"
 name = "qtreload"
 description = "Qt utilities to enable hot-reloading of python/Qt code"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "BSD 3-Clause License" }
 authors = [
     { email = "lukas.migas@yahoo.com", name = "Lukasz G. Migas" },
@@ -25,7 +25,6 @@ classifiers = [
     "License :: OSI Approved :: BSD License",
     "Natural Language :: English",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",

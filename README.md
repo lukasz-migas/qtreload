@@ -19,7 +19,7 @@ pip install "qtreload[pyqt6]"
 pip install "qtreload[pyside6]"
 ```
 
-qtreload requires Python 3.10 or later and uses [QtPy](https://github.com/spyder-ide/qtpy) to work with PyQt or PySide.
+qtreload requires Python 3.11 or later and uses [QtPy](https://github.com/spyder-ide/qtpy) to work with PyQt or PySide.
 
 ## Quick start
 

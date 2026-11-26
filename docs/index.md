@@ -8,7 +8,7 @@ Reloading has limits: existing widgets do not rerun their constructors, and some
 
 ## Install
 
-qtreload requires Python 3.10 or later and a supported Qt binding. Install one with the package:
+qtreload requires Python 3.11 or later and a supported Qt binding. Install one with the package:
 
 ```bash
 pip install "qtreload[pyqt6]"
