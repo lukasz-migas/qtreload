@@ -358,6 +358,7 @@ def test_messages_have_levels(qtbot, make_reloader, make_package, monkeypatch):
 
     from qtreload import reloader as reloader_module
 
+    monkeypatch.setattr(reloader_module, "MAX_MESSAGES", 20)  # small cap, emitting 1000+ messages aborts Python 3.10 + PySide6 at exit
     name, root = make_package({"a.py": "def value():\n    return 1\n"})
     importlib.import_module(f"{name}.a")
     reloader = make_reloader([name, "not_a_module_qtreload"])

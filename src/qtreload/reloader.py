@@ -51,6 +51,9 @@ STYLESHEET_PATTERN = ("**/*.qss",)
 IGNORE_DIRECTORIES = ("__pycache__",)
 # number of recent log messages kept in `HotReloader.messages`
 MAX_MESSAGES = 1000
+
+# slack (seconds) when comparing file modification times to `time.time()`, which can use different clocks
+_MTIME_TOLERANCE = 0.05
 # organization name of the QSettings used to remember edits (see `HotReloader(settings_key=...)`)
 SETTINGS_ORGANIZATION = "qtreload"
 # remembered values and whether each is a list of strings (otherwise a bool)
@@ -531,7 +534,8 @@ class HotReloader(QObject):
             modified = Path(path).stat().st_mtime
         except OSError:
             return False
-        return self._pause_window[0] <= modified < self._pause_window[1]
+        # file timestamps can lag behind `time.time()` (coarse clocks on Windows), so allow slack at the start
+        return self._pause_window[0] - _MTIME_TOLERANCE <= modified < self._pause_window[1]
 
     def _resync_watcher(self) -> None:
         """Rediscover all modules and re-watch registered stylesheets, e.g. after changes were ignored."""
