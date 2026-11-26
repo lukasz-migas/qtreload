@@ -117,7 +117,8 @@ def _read_pyproject(path: Path) -> dict[str, ty.Any]:
 def _parse_table(table: ty.Any, path: Path) -> dict[str, ty.Any]:
     """Validate the [tool.qtreload] table."""
     if not isinstance(table, dict):
-        raise ValueError(f"[tool.qtreload] in '{path}' must be a table.")  # - all config errors are ValueError
+        # - all config errors are ValueError
+        raise ValueError(f"[tool.qtreload] in '{path}' must be a table.")
     known = {field.name for field in fields(ReloadConfig)}
     values: dict[str, ty.Any] = {}
     for key, value in table.items():
