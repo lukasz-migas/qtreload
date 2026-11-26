@@ -14,7 +14,7 @@ def test_widget(qtbot):
     assert len(widget.path_to_index_map) > 0, "Expected more than 1 path"
 
     # make sure we can retrieve each module properly
-    for path in widget.path_to_index_map.keys():
+    for path in widget.path_to_index_map:
         module = path_to_module(path, widget.get_module_path_for_path(path))
         assert module, "Module should not be empty"
 
@@ -36,7 +36,7 @@ def test_install_hot_reload(qtbot):
     assert widget.reloader.modules == ("qtreload",)
 
     # make sure we can retrieve each module properly
-    for path in widget.path_to_index_map.keys():
+    for path in widget.path_to_index_map:
         module = path_to_module(path, widget.get_module_path_for_path(path))
         assert module, "Module should not be empty"
         paths = widget.reloader._get_file_paths(module)

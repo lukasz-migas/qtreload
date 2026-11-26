@@ -3,10 +3,11 @@
 import sys
 from pathlib import Path
 
-from qtpy.QtWidgets import QApplication, QVBoxLayout, QWidget
-
-from examples.panel import DemoPanel
+from qtpy.QtWidgets import QApplication, QHBoxLayout, QWidget
 from qtreload import HotReloader
+
+from examples.editor import ExampleEditor
+from examples.panel import DemoPanel
 
 
 def main() -> int:
@@ -14,7 +15,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     window = QWidget()
     window.setWindowTitle("qtreload live widget example")
-    layout = QVBoxLayout(window)
+    layout = QHBoxLayout(window)
 
     reloader = HotReloader(["examples"], parent=app)
     reloader.evt_reloaded.connect(lambda result: print(result.summary()))
@@ -22,7 +23,9 @@ def main() -> int:
     reloader.register_stylesheet(Path(__file__).with_name("style.qss"))
     live = reloader.register_factory(DemoPanel)
     layout.addWidget(live.widget)
+    layout.addWidget(ExampleEditor("panel.py", "style.qss"))
 
+    window.resize(1000, 600)
     window.show()
     return app.exec()
 

@@ -17,7 +17,6 @@ STYLESHEET_VARIABLE_PATTERN = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\
 
 def noop(msg: str) -> None:
     """No operation."""
-    pass
 
 
 def _get_paths_for_pattern(path: Path, patterns: tuple[str, ...], log_func: ty.Callable = noop) -> list[Path]:

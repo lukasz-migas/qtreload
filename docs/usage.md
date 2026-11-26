@@ -86,9 +86,7 @@ Register an existing stylesheet to apply it immediately and again when it change
 
 ```python
 reloader.register_stylesheet("styles/app.qss")  # Applies to QApplication.
-reloader.register_stylesheet(
-    "styles/panel.qss", target=panel, variables=lambda: {"accent": "#4488cc"}
-)
+reloader.register_stylesheet("styles/panel.qss", target=panel, variables=lambda: {"accent": "#4488cc"})
 ```
 
 The second file can use a `{{ accent }}` placeholder. A callable supplies fresh variables each time the stylesheet is applied; call `reloader.apply_stylesheets()` after changing a theme. Stylesheets registered for the same target are joined in registration order. Keep the target alive for as long as it is needed.

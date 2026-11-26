@@ -3,9 +3,10 @@
 import sys
 
 from qtpy.QtWidgets import QApplication, QHBoxLayout, QWidget
-
-from examples.panel import DemoPanel
 from qtreload import QtReloadWidget
+
+from examples.editor import ExampleEditor
+from examples.panel import DemoPanel
 
 
 def main() -> int:
@@ -15,7 +16,9 @@ def main() -> int:
     window.setWindowTitle("qtreload embedded example")
     layout = QHBoxLayout(window)
     layout.addWidget(DemoPanel())
+    layout.addWidget(ExampleEditor("panel.py"))
     layout.addWidget(QtReloadWidget(["examples"], parent=window))
+    window.resize(1400, 700)
     window.show()
     return app.exec()
 
