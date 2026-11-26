@@ -104,6 +104,7 @@ Connect to `live.evt_rebuilt` to reconnect signals on the replacement. See [usag
 ## Documentation
 
 Read the [documentation](https://lukasz-migas.github.io/qtreload/) for configuration, the widget inspector, stylesheets, and reload limitations.
+The [examples directory](examples/README.md) contains small applications you can run and edit.
 
 To build the documentation locally from a checkout:
 
