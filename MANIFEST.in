@@ -8,6 +8,8 @@ recursive-exclude * *.py[co]
 # Top-level config
 include MANIFEST.in
 include LICENSE
+include zensical.toml
+recursive-include docs *.md
 exclude example.py
 recursive-include tests *
 recursive-include src *.typed

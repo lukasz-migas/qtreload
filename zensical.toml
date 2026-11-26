@@ -1,0 +1,21 @@
+[project]
+site_name = "qtreload"
+site_url = "https://lukasz-migas.github.io/qtreload/"
+site_description = "Hot reloading for Python Qt applications"
+repo_name = "lukasz-migas/qtreload"
+repo_url = "https://github.com/lukasz-migas/qtreload"
+strict = true
+nav = [
+    { "Getting started" = "index.md" },
+    { Usage = "usage.md" },
+    { Configuration = "configuration.md" },
+    { "Widget inspector" = "inspector.md" },
+    { Limitations = "limitations.md" },
+]
+
+[project.theme]
+variant = "classic"
+features = ["navigation.top", "search.highlight", "search.suggest"]
+
+[project.markdown_extensions]
+"pymdownx.superfences" = {}
